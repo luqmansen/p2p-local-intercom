@@ -1235,6 +1235,11 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
     val ec by viewModel.echoCancelerEnabled.collectAsStateWithLifecycle()
     val agc by viewModel.agcEnabled.collectAsStateWithLifecycle()
 
+    val hpfEnabled by viewModel.hpfEnabled.collectAsStateWithLifecycle()
+    val hpfCutoff by viewModel.hpfCutoff.collectAsStateWithLifecycle()
+    val limiterEnabled by viewModel.limiterEnabled.collectAsStateWithLifecycle()
+    val limiterThreshold by viewModel.limiterThreshold.collectAsStateWithLifecycle()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1617,6 +1622,169 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
                     uncheckedTrackColor = SlateBackground
                 )
             )
+        }
+
+        Divider(color = TacticalBorder)
+
+        // Software-Side DSP Signal Conditioning
+        Text(
+            text = "TACTICAL SOFTWARE DSP CONDITIONING",
+            color = TacticalAmber,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.SansSerif
+        )
+
+        // High-Pass Filter Toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "HIGH-PASS FILTER (HPF)",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = "Cuts low-frequency wind rumbling and vehicle engine hums",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Switch(
+                checked = hpfEnabled,
+                onCheckedChange = { viewModel.toggleHpf(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = TacticalGreen,
+                    checkedTrackColor = TacticalGreen.copy(alpha = 0.3f),
+                    uncheckedThumbColor = TacticalMuted,
+                    uncheckedTrackColor = SlateBackground
+                )
+            )
+        }
+
+        // HPF Cutoff Frequency Slider
+        if (hpfEnabled) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "HPF CUTOFF FREQUENCY",
+                        color = CombatWhite,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif
+                    )
+                    Text(
+                        text = "${hpfCutoff.toInt()} Hz",
+                        color = TacticalGreen,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif
+                    )
+                }
+                Slider(
+                    value = hpfCutoff,
+                    onValueChange = { viewModel.setHpfCutoff(it) },
+                    valueRange = 60f..300f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = TacticalGreen,
+                        activeTrackColor = TacticalGreen,
+                        inactiveTrackColor = TacticalBorder
+                    )
+                )
+                Text(
+                    text = "Frequencies below this cutoff value are attenuated at 6 dB/octave.",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        // Soft Limiter Toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "DYNAMIC SOFT LIMITER",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = "Gradually compresses peaks above threshold to prevent digital clipping",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Switch(
+                checked = limiterEnabled,
+                onCheckedChange = { viewModel.toggleLimiter(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = TacticalGreen,
+                    checkedTrackColor = TacticalGreen.copy(alpha = 0.3f),
+                    uncheckedThumbColor = TacticalMuted,
+                    uncheckedTrackColor = SlateBackground
+                )
+            )
+        }
+
+        // Soft Limiter Threshold Slider
+        if (limiterEnabled) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "LIMITER THRESHOLD (COMPRESSION RATIO)",
+                        color = CombatWhite,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif
+                    )
+                    Text(
+                        text = String.format("%.0f%%", limiterThreshold * 100),
+                        color = TacticalGreen,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif
+                    )
+                }
+                Slider(
+                    value = limiterThreshold,
+                    onValueChange = { viewModel.setLimiterThreshold(it) },
+                    valueRange = 0.5f..0.99f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = TacticalGreen,
+                        activeTrackColor = TacticalGreen,
+                        inactiveTrackColor = TacticalBorder
+                    )
+                )
+                Text(
+                    text = "Signals exceeding this limit are softly saturated. Low values create warmer, denser talk; high values retain dynamic range.",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
         }
     }
 }

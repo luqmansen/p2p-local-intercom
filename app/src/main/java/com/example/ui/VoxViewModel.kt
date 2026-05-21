@@ -79,6 +79,12 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     val echoCancelerEnabled = MutableStateFlow(audioEngine.isEchoCancelerEnabled)
     val agcEnabled = MutableStateFlow(audioEngine.isAgcEnabled)
 
+    // Software DSP Configs (HPF and Soft Limiter)
+    val hpfEnabled = MutableStateFlow(audioEngine.isHpfEnabled)
+    val hpfCutoff = MutableStateFlow(audioEngine.hpfCutoff)
+    val limiterEnabled = MutableStateFlow(audioEngine.isLimiterEnabled)
+    val limiterThreshold = MutableStateFlow(audioEngine.limiterThreshold)
+
     // Real-time Mic Amplitude
     val realtimeAmplitude: StateFlow<Float> = audioEngine.realtimeAmplitude
     val isTransmitting: StateFlow<Boolean> = audioEngine.isTransmitting
@@ -562,6 +568,28 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isAgcEnabled = enabled
         audioEngine.updateHardwareEffects(noiseSuppressorEnabled.value, echoCancelerEnabled.value, enabled)
         addLog("Automatic Gain Control: " + if (enabled) "ON" else "OFF")
+    }
+
+    fun toggleHpf(enabled: Boolean) {
+        hpfEnabled.value = enabled
+        audioEngine.isHpfEnabled = enabled
+        addLog("DSP High-Pass Filter: " + if (enabled) "ACTIVE" else "BYPASSED")
+    }
+
+    fun setHpfCutoff(value: Float) {
+        hpfCutoff.value = value
+        audioEngine.hpfCutoff = value
+    }
+
+    fun toggleLimiter(enabled: Boolean) {
+        limiterEnabled.value = enabled
+        audioEngine.isLimiterEnabled = enabled
+        addLog("DSP Soft Limiter: " + if (enabled) "ACTIVE" else "BYPASSED")
+    }
+
+    fun setLimiterThreshold(value: Float) {
+        limiterThreshold.value = value
+        audioEngine.limiterThreshold = value
     }
 
     fun clearLogs() {

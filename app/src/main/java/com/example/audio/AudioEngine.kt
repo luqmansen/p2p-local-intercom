@@ -40,6 +40,18 @@ class AudioEngine(private val context: android.content.Context) {
     @Volatile var isAgcEnabled: Boolean = true
     @Volatile var micBoostFactor: Float = 2.5f       // Microphone/recording boost factor (1.0x - 5.0x)
     @Volatile var playbackBoostFactor: Float = 2.5f  // Playback/speaker boost factor (1.0x - 5.0x)
+    @Volatile var isHpfEnabled: Boolean = true
+    @Volatile var hpfCutoff: Float = 120f             // Default HPF cutoff (Hz)
+    @Volatile var isLimiterEnabled: Boolean = true
+    @Volatile var limiterThreshold: Float = 0.8f      // Default Soft Limiter threshold (80% full scale)
+
+    // State for HPF to maintain continuity across audio buffers
+    private var lastHpfInput: Float = 0f
+    private var lastHpfOutput: Float = 0f
+
+    // Read-only coefficient for HPF
+    private val hpfAlpha: Float
+        get() = (1f / (1f + (2f * Math.PI.toFloat() * hpfCutoff / SAMPLE_RATE)))
 
     // State flows for UI observing
     private val _realtimeAmplitude = MutableStateFlow(0f)
@@ -106,17 +118,47 @@ class AudioEngine(private val context: android.content.Context) {
             val shortBuffer = ShortArray(1024) // 1024 shorts is 64ms at 16000Hz
             val byteBuffer = ByteArray(2048)
             lastVoiceDetectedTime = 0L
+            lastHpfInput = 0f
+            lastHpfOutput = 0f
 
             while (audioRecord != null && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val readResult = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
                 if (readResult > 0) {
-                    // Apply real-time digital software mic boost
+                    // 1. High Pass Filter (HPF) to remove low-frequency rumble & engine hums
+                    if (isHpfEnabled) {
+                        val alpha = hpfAlpha
+                        for (i in 0 until readResult) {
+                            val x = shortBuffer[i].toFloat()
+                            val y = alpha * (lastHpfOutput + x - lastHpfInput)
+                            lastHpfInput = x
+                            lastHpfOutput = y
+                            shortBuffer[i] = y.coerceIn(-32768f, 32767f).toInt().toShort()
+                        }
+                    }
+
+                    // 2. Apply real-time digital software mic boost
                     val currentMicBoost = micBoostFactor
                     if (currentMicBoost != 1.0f) {
                         for (i in 0 until readResult) {
-                            val originalVal = shortBuffer[i].toInt()
-                            val boostedVal = (originalVal * currentMicBoost).toInt()
-                            shortBuffer[i] = boostedVal.coerceIn(-32768, 32767).toShort()
+                            val originalVal = shortBuffer[i].toFloat()
+                            val boostedVal = originalVal * currentMicBoost
+                            shortBuffer[i] = boostedVal.coerceIn(-32768f, 32767f).toInt().toShort()
+                        }
+                    }
+
+                    // 3. Apply Soft Limiter to prevent harsh digital clipping from the boost
+                    if (isLimiterEnabled) {
+                        val limitT = limiterThreshold
+                        for (i in 0 until readResult) {
+                            val sampleNorm = shortBuffer[i].toFloat() / 32768f
+                            val absSample = abs(sampleNorm)
+                            if (absSample > limitT) {
+                                val excess = absSample - limitT
+                                val compressedExcess = (1f - limitT) * (excess / ((1f - limitT) + excess))
+                                val sign = if (sampleNorm < 0f) -1f else 1f
+                                val limitedNorm = sign * (limitT + compressedExcess)
+                                shortBuffer[i] = (limitedNorm * 32768f).coerceIn(-32768f, 32767f).toInt().toShort()
+                            }
                         }
                     }
 
@@ -256,22 +298,42 @@ class AudioEngine(private val context: android.content.Context) {
         if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
             try {
                 val currentPlayBoost = playbackBoostFactor
-                val boostedData = if (currentPlayBoost != 1.0f) {
+                val isLimiter = isLimiterEnabled
+                val limitT = limiterThreshold
+
+                if (currentPlayBoost != 1.0f || isLimiter) {
                     val len = data.size
                     val result = ByteArray(len)
                     for (i in 0 until len step 2) {
                         if (i + 1 < len) {
+                            // Extract 16-bit linear PCM sample
                             val sample = ((data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)).toShort()
-                            val boosted = (sample * currentPlayBoost).toInt().coerceIn(-32768, 32767)
-                            result[i] = (boosted and 0xFF).toByte()
-                            result[i + 1] = ((boosted shr 8) and 0xFF).toByte()
+                            
+                            // 1. Gain boost
+                            var fSample = sample.toFloat() * currentPlayBoost
+                            
+                            // 2. Soft limiter
+                            if (isLimiter) {
+                                val sampleNorm = fSample / 32768f
+                                val absVolume = abs(sampleNorm)
+                                if (absVolume > limitT) {
+                                    val excess = absVolume - limitT
+                                    val compressedExcess = (1f - limitT) * (excess / ((1f - limitT) + excess))
+                                    val sign = if (sampleNorm < 0f) -1f else 1f
+                                    val limitedNorm = sign * (limitT + compressedExcess)
+                                    fSample = limitedNorm * 32768f
+                                }
+                            }
+                            
+                            val finalSample = fSample.coerceIn(-32768f, 32767f).toInt()
+                            result[i] = (finalSample and 0xFF).toByte()
+                            result[i + 1] = ((finalSample shr 8) and 0xFF).toByte()
                         }
                     }
-                    result
+                    track.write(result, 0, result.size)
                 } else {
-                    data
+                    track.write(data, 0, data.size)
                 }
-                track.write(boostedData, 0, boostedData.size)
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing to AudioTrack", e)
             }
