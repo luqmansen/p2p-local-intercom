@@ -1159,11 +1159,77 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
 }
 
 @Composable
+fun TacticalVUMeter(
+    amplitude: Float,
+    threshold: Float,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "REAL-TIME MIC INPUT LEVEL",
+                color = TacticalMuted,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.SansSerif,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = if (amplitude >= threshold) "ACTIVE (TRANSMITTING)" else "STANDBY (SILENT)",
+                color = if (amplitude >= threshold) TacticalGreen else TacticalMuted,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.SansSerif,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .background(SlateBackground, RoundedCornerShape(4.dp))
+                .border(BorderStroke(1.dp, TacticalBorder), RoundedCornerShape(4.dp))
+        ) {
+            // Draw current amplitude level (normalizing it to make it visible up to 0.3)
+            val scaledAmplitude = (amplitude / 0.30f).coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction = scaledAmplitude)
+                    .fillMaxHeight()
+                    .background(
+                        color = if (amplitude >= threshold) TacticalGreen else TacticalGreen.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(3.dp)
+                    )
+            )
+
+            // Draw threshold tick divider
+            Canvas(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                val xPos = size.width * (threshold / 0.30f).coerceIn(0f, 1f)
+                drawLine(
+                    color = TacticalCrimson,
+                    start = androidx.compose.ui.geometry.Offset(xPos, 0f),
+                    end = androidx.compose.ui.geometry.Offset(xPos, size.height),
+                    strokeWidth = 2.dp.toPx()
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun VoxSettingsSection(viewModel: VoxViewModel) {
     val isVoxOn by viewModel.voxEnabled.collectAsStateWithLifecycle()
     val threshold by viewModel.voxThreshold.collectAsStateWithLifecycle()
     val hangover by viewModel.voxHangoverMs.collectAsStateWithLifecycle()
     val rawAmplitude by viewModel.realtimeAmplitude.collectAsStateWithLifecycle()
+
+    val micBoost by viewModel.micBoost.collectAsStateWithLifecycle()
+    val playbackBoost by viewModel.playbackBoost.collectAsStateWithLifecycle()
+    val isSpeakerphoneOn by viewModel.isSpeakerphoneOn.collectAsStateWithLifecycle()
 
     val ns by viewModel.noiseSuppressorEnabled.collectAsStateWithLifecycle()
     val ec by viewModel.echoCancelerEnabled.collectAsStateWithLifecycle()
@@ -1213,6 +1279,145 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
             )
         }
 
+        // --- Hardware routing controls ---
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "AUDIO OUTPUT OUTLET",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = "Route voice packets via loudspeaker or receiver earpiece",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Button(
+                onClick = { viewModel.toggleSpeakerphone() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSpeakerphoneOn) TacticalGreen else SlateBackground
+                ),
+                border = BorderStroke(1.dp, if (isSpeakerphoneOn) TacticalGreen else TacticalBorder),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(36.dp)
+            ) {
+                Icon(
+                    imageVector = if (isSpeakerphoneOn) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    contentDescription = "Speakerphone routing",
+                    tint = if (isSpeakerphoneOn) CombatWhite else TacticalMuted,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isSpeakerphoneOn) "LOUDSPEAKER" else "EARPIECE",
+                    fontSize = 10.sp,
+                    color = if (isSpeakerphoneOn) CombatWhite else TacticalMuted,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Divider(color = TacticalBorder)
+
+        // --- Software Signal Gain Boosters ---
+        Text(
+            text = "DIGITAL SOFTWARE AMPLIFICATION BOOSTERS",
+            color = TacticalAmber,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.SansSerif
+        )
+
+        // Mic Signal Boost Slider
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "MICROPHONE RECORD GAIN (MIC BOOST)",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = String.format("%.1fx", micBoost),
+                    color = TacticalGreen,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Slider(
+                value = micBoost,
+                onValueChange = { viewModel.setMicBoost(it) },
+                valueRange = 1.0f..5.0f,
+                colors = SliderDefaults.colors(
+                    thumbColor = TacticalAmber,
+                    activeTrackColor = TacticalAmber,
+                    inactiveTrackColor = TacticalBorder
+                )
+            )
+            Text(
+                text = "Multiplies microphone input amplitude digitally. Use higher boosts to speak further away from mic.",
+                color = TacticalMuted,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.SansSerif
+            )
+        }
+
+        // Speaker Playback Volume Boost Slider
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "INCOMING PLAYBACK MASTER BOOST",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = String.format("%.1fx", playbackBoost),
+                    color = TacticalGreen,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Slider(
+                value = playbackBoost,
+                onValueChange = { viewModel.setPlaybackBoost(it) },
+                valueRange = 1.0f..5.0f,
+                colors = SliderDefaults.colors(
+                    thumbColor = TacticalAmber,
+                    activeTrackColor = TacticalAmber,
+                    inactiveTrackColor = TacticalBorder
+                )
+            )
+            Text(
+                text = "Amplifies incoming PCM streams directly in software. Overrides hardware volume upper limits.",
+                color = TacticalMuted,
+                fontSize = 9.sp,
+                fontFamily = FontFamily.SansSerif
+            )
+        }
+
+        Divider(color = TacticalBorder)
+
         if (isVoxOn) {
             // VOX Threshold setting
             Column {
@@ -1229,7 +1434,7 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
                         fontFamily = FontFamily.SansSerif
                     )
                     Text(
-                        text = "${(threshold * 100).toInt()}%",
+                        text = String.format("%.1f%%", threshold * 100),
                         color = TacticalGreen,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -1237,39 +1442,26 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
                     )
                 }
 
+                Spacer(modifier = Modifier.height(4.dp))
+                TacticalVUMeter(amplitude = rawAmplitude, threshold = threshold)
+                Spacer(modifier = Modifier.height(6.dp))
+
                 // Slider
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                     Slider(
                         value = threshold,
                         onValueChange = { viewModel.setVoxThreshold(it) },
-                        valueRange = 0.01f..0.30f,
+                        valueRange = 0.005f..0.30f,
                         colors = SliderDefaults.colors(
                             thumbColor = TacticalGreen,
                             activeTrackColor = TacticalGreen,
                             inactiveTrackColor = TacticalBorder
                         )
                     )
-
-                    // Overlay live audio record pointer on the slider track so user can easily adjust!
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(12.dp)
-                            .padding(horizontal = 8.dp)
-                    ) {
-                        // Offset map rawAmplitude to slider width
-                        // Slider is between 0.01 and 0.30, make a red dot representing the amplitude
-                        val xOffset = size.width * (rawAmplitude / 0.30f).coerceIn(0f, 1f)
-                        drawCircle(
-                            color = if (rawAmplitude >= threshold) TacticalGreen else TacticalCrimson,
-                            radius = 4.dp.toPx(),
-                            center = androidx.compose.ui.geometry.Offset(xOffset, size.height / 2)
-                        )
-                    }
                 }
 
                 Text(
-                    text = "Move slider above ambient outdoor noise to prevent false triggering.",
+                    text = "Move slider above ambient outdoor noise (silent level) to prevent false triggering.",
                     color = TacticalMuted,
                     fontSize = 10.sp,
                     fontFamily = FontFamily.SansSerif

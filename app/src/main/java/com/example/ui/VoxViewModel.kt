@@ -69,6 +69,11 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     val voxThreshold = MutableStateFlow(audioEngine.voxThreshold)
     val voxHangoverMs = MutableStateFlow(audioEngine.voxHangoverMs)
 
+    // Booster & Routing Configs
+    val micBoost = MutableStateFlow(audioEngine.micBoostFactor)
+    val playbackBoost = MutableStateFlow(audioEngine.playbackBoostFactor)
+    val isSpeakerphoneOn: StateFlow<Boolean> = audioEngine.isSpeakerphoneOn
+
     // Noise Cancellation Configs
     val noiseSuppressorEnabled = MutableStateFlow(audioEngine.isNoiseSuppressorEnabled)
     val echoCancelerEnabled = MutableStateFlow(audioEngine.isEchoCancelerEnabled)
@@ -520,6 +525,22 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     fun setVoxHangover(value: Long) {
         voxHangoverMs.value = value
         audioEngine.voxHangoverMs = value
+    }
+
+    fun setMicBoost(value: Float) {
+        micBoost.value = value
+        audioEngine.micBoostFactor = value
+    }
+
+    fun setPlaybackBoost(value: Float) {
+        playbackBoost.value = value
+        audioEngine.playbackBoostFactor = value
+    }
+
+    fun toggleSpeakerphone() {
+        val current = isSpeakerphoneOn.value
+        audioEngine.setSpeakerphoneOn(!current)
+        addLog("Audio output switched to " + if (!current) "Loudspeaker" else "Earpiece/Receiver")
     }
 
     fun toggleNoiseSuppressor(enabled: Boolean) {

@@ -9,6 +9,7 @@ import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,8 @@ class AudioEngine(private val context: android.content.Context) {
     @Volatile var isNoiseSuppressorEnabled: Boolean = true
     @Volatile var isEchoCancelerEnabled: Boolean = true
     @Volatile var isAgcEnabled: Boolean = true
+    @Volatile var micBoostFactor: Float = 2.5f       // Microphone/recording boost factor (1.0x - 5.0x)
+    @Volatile var playbackBoostFactor: Float = 2.5f  // Playback/speaker boost factor (1.0x - 5.0x)
 
     // State flows for UI observing
     private val _realtimeAmplitude = MutableStateFlow(0f)
@@ -44,6 +47,9 @@ class AudioEngine(private val context: android.content.Context) {
 
     private val _isTransmitting = MutableStateFlow(false)
     val isTransmitting: StateFlow<Boolean> = _isTransmitting
+
+    private val _isSpeakerphoneOn = MutableStateFlow(true)
+    val isSpeakerphoneOn: StateFlow<Boolean> = _isSpeakerphoneOn
 
     // Audio Capture and Render
     private var audioRecord: AudioRecord? = null
@@ -104,6 +110,16 @@ class AudioEngine(private val context: android.content.Context) {
             while (audioRecord != null && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val readResult = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
                 if (readResult > 0) {
+                    // Apply real-time digital software mic boost
+                    val currentMicBoost = micBoostFactor
+                    if (currentMicBoost != 1.0f) {
+                        for (i in 0 until readResult) {
+                            val originalVal = shortBuffer[i].toInt()
+                            val boostedVal = (originalVal * currentMicBoost).toInt()
+                            shortBuffer[i] = boostedVal.coerceIn(-32768, 32767).toShort()
+                        }
+                    }
+
                     var maxAbs = 0
                     for (i in 0 until readResult) {
                         val sampleValue = shortBuffer[i].toInt()
@@ -239,7 +255,23 @@ class AudioEngine(private val context: android.content.Context) {
         val track = audioTrack
         if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
             try {
-                track.write(data, 0, data.size)
+                val currentPlayBoost = playbackBoostFactor
+                val boostedData = if (currentPlayBoost != 1.0f) {
+                    val len = data.size
+                    val result = ByteArray(len)
+                    for (i in 0 until len step 2) {
+                        if (i + 1 < len) {
+                            val sample = ((data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)).toShort()
+                            val boosted = (sample * currentPlayBoost).toInt().coerceIn(-32768, 32767)
+                            result[i] = (boosted and 0xFF).toByte()
+                            result[i + 1] = ((boosted shr 8) and 0xFF).toByte()
+                        }
+                    }
+                    result
+                } else {
+                    data
+                }
+                track.write(boostedData, 0, boostedData.size)
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing to AudioTrack", e)
             }
@@ -258,11 +290,46 @@ class AudioEngine(private val context: android.content.Context) {
         checkAndResetAudioMode()
     }
 
+    fun setSpeakerphoneOn(on: Boolean) {
+        _isSpeakerphoneOn.value = on
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = audioManager.availableCommunicationDevices
+                val speakerDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                val earpieceDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                if (on) {
+                    if (speakerDevice != null) {
+                        audioManager.setCommunicationDevice(speakerDevice)
+                        Log.d(TAG, "Successfully set communication device to SPEAKER")
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audioManager.isSpeakerphoneOn = true
+                    }
+                } else {
+                    if (earpieceDevice != null) {
+                        audioManager.setCommunicationDevice(earpieceDevice)
+                        Log.d(TAG, "Successfully set communication device to EARPIECE")
+                    } else {
+                        audioManager.clearCommunicationDevice()
+                        @Suppress("DEPRECATION")
+                        audioManager.isSpeakerphoneOn = false
+                    }
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = on
+            }
+            Log.d(TAG, "Speakerphone set to $on")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to toggle speakerphone", e)
+        }
+    }
+
     private fun startCommunicationMode() {
         try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.isSpeakerphoneOn = true
-            Log.d(TAG, "Communication mode started: speakerphone on")
+            setSpeakerphoneOn(_isSpeakerphoneOn.value)
+            Log.d(TAG, "Communication mode started")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start communication mode", e)
         }
@@ -271,7 +338,12 @@ class AudioEngine(private val context: android.content.Context) {
     private fun stopCommunicationMode() {
         try {
             audioManager.mode = AudioManager.MODE_NORMAL
-            audioManager.isSpeakerphoneOn = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = false
+            }
             Log.d(TAG, "Communication mode stopped: normal")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop communication mode", e)
