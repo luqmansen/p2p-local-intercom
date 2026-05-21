@@ -48,6 +48,7 @@ class AudioEngine(private val context: android.content.Context) {
     @Volatile var isAcousticCuesEnabled: Boolean = true
 
     private var toneGen: ToneGenerator? = null
+    @Volatile var tonePlayingUntilMillis: Long = 0L
 
     // State for HPF to maintain continuity across audio buffers
     private var lastHpfInput: Float = 0f

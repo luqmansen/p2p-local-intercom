@@ -34,9 +34,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.os.Build
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 // --- High Density Color Palette (MeshVoice Pro Theme) ---
 val SlateBackground = Color(0xFFFDFBFF)      // Whole container background (off-white blue shimmer)
@@ -52,18 +54,28 @@ val CombatWhite = Color(0xFF1A1C1E)          // Deep charcoal text for readabili
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun VoxApp(viewModel: VoxViewModel) {
+    val permissions = remember {
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+    val permissionsState = rememberMultiplePermissionsState(permissions = permissions)
+
     // Standard tactical deep canvas wrapper
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = SlateBackground
     ) {
-        val micPermissionState = rememberPermissionState(permission = Manifest.permission.RECORD_AUDIO)
+        val micGranted = permissionsState.permissions.find { it.permission == Manifest.permission.RECORD_AUDIO }?.status?.isGranted == true
 
-        if (micPermissionState.status.isGranted) {
+        if (micGranted) {
             VoxMainContent(viewModel)
         } else {
             VoxPermissionScreen(
-                onRequestAction = { micPermissionState.launchPermissionRequest() }
+                onRequestAction = { permissionsState.launchMultiplePermissionRequest() }
             )
         }
     }
