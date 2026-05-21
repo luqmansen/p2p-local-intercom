@@ -266,6 +266,144 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        // Load configurations from SharedPreferences
+        val prefs = context.getSharedPreferences("vox_prefs", Context.MODE_PRIVATE)
+
+        // 1. Nickname
+        val storedNick = prefs.getString("nickname", null)
+        if (storedNick != null) {
+            nickname.value = storedNick
+        }
+
+        // 2. targetServerIp
+        val storedTargetIp = prefs.getString("targetServerIp", null)
+        if (storedTargetIp != null) {
+            targetServerIp.value = storedTargetIp
+        }
+
+        // 3. serverLaunchPort
+        val storedPort = prefs.getInt("serverLaunchPort", -1)
+        if (storedPort != -1) {
+            serverLaunchPort.value = storedPort
+        }
+
+        // 4. VOX enabled
+        val storedVoxEnabled = prefs.getBoolean("voxEnabled", audioEngine.isVoxEnabled)
+        voxEnabled.value = storedVoxEnabled
+        audioEngine.isVoxEnabled = storedVoxEnabled
+
+        // 5. VOX threshold
+        val storedVoxThreshold = prefs.getFloat("voxThreshold", audioEngine.voxThreshold)
+        voxThreshold.value = storedVoxThreshold
+        audioEngine.voxThreshold = storedVoxThreshold
+
+        // 6. VOX hangover
+        val storedVoxHangover = prefs.getLong("voxHangoverMs", audioEngine.voxHangoverMs)
+        voxHangoverMs.value = storedVoxHangover
+        audioEngine.voxHangoverMs = storedVoxHangover
+
+        // 7. micBoost
+        val storedMicBoost = prefs.getFloat("micBoost", audioEngine.micBoostFactor)
+        micBoost.value = storedMicBoost
+        audioEngine.micBoostFactor = storedMicBoost
+
+        // 8. playbackBoost
+        val storedPlaybackBoost = prefs.getFloat("playbackBoost", audioEngine.playbackBoostFactor)
+        playbackBoost.value = storedPlaybackBoost
+        audioEngine.playbackBoostFactor = storedPlaybackBoost
+
+        // 9. noiseSuppressorEnabled
+        val storedNSEnabled = prefs.getBoolean("noiseSuppressorEnabled", audioEngine.isNoiseSuppressorEnabled)
+        noiseSuppressorEnabled.value = storedNSEnabled
+        audioEngine.isNoiseSuppressorEnabled = storedNSEnabled
+
+        // 10. echoCancelerEnabled
+        val storedECEnabled = prefs.getBoolean("echoCancelerEnabled", audioEngine.isEchoCancelerEnabled)
+        echoCancelerEnabled.value = storedECEnabled
+        audioEngine.isEchoCancelerEnabled = storedECEnabled
+
+        // 11. agcEnabled
+        val storedAGCEnabled = prefs.getBoolean("agcEnabled", audioEngine.isAgcEnabled)
+        agcEnabled.value = storedAGCEnabled
+        audioEngine.isAgcEnabled = storedAGCEnabled
+
+        // Update hardware effects based on loaded values
+        audioEngine.updateHardwareEffects(storedNSEnabled, storedECEnabled, storedAGCEnabled)
+
+        // 12. hpfEnabled
+        val storedHpfEnabled = prefs.getBoolean("hpfEnabled", audioEngine.isHpfEnabled)
+        hpfEnabled.value = storedHpfEnabled
+        audioEngine.isHpfEnabled = storedHpfEnabled
+
+        // 13. hpfCutoff
+        val storedHpfCutoff = prefs.getFloat("hpfCutoff", audioEngine.hpfCutoff)
+        hpfCutoff.value = storedHpfCutoff
+        audioEngine.hpfCutoff = storedHpfCutoff
+
+        // 14. limiterEnabled
+        val storedLimiterEnabled = prefs.getBoolean("limiterEnabled", audioEngine.isLimiterEnabled)
+        limiterEnabled.value = storedLimiterEnabled
+        audioEngine.isLimiterEnabled = storedLimiterEnabled
+
+        // 15. limiterThreshold
+        val storedLimiterThreshold = prefs.getFloat("limiterThreshold", audioEngine.limiterThreshold)
+        limiterThreshold.value = storedLimiterThreshold
+        audioEngine.limiterThreshold = storedLimiterThreshold
+
+        // 16. isSpeakerphoneOn
+        val storedSpeakerphone = prefs.getBoolean("isSpeakerphoneOn", true) // Default loudspeaker is true
+        audioEngine.setSpeakerphoneOn(storedSpeakerphone)
+
+        // Launch watchers to save any config changes
+        viewModelScope.launch {
+            nickname.collect { prefs.edit().putString("nickname", it).apply() }
+        }
+        viewModelScope.launch {
+            targetServerIp.collect { prefs.edit().putString("targetServerIp", it).apply() }
+        }
+        viewModelScope.launch {
+            serverLaunchPort.collect { prefs.edit().putInt("serverLaunchPort", it).apply() }
+        }
+        viewModelScope.launch {
+            voxEnabled.collect { prefs.edit().putBoolean("voxEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            voxThreshold.collect { prefs.edit().putFloat("voxThreshold", it).apply() }
+        }
+        viewModelScope.launch {
+            voxHangoverMs.collect { prefs.edit().putLong("voxHangoverMs", it).apply() }
+        }
+        viewModelScope.launch {
+            micBoost.collect { prefs.edit().putFloat("micBoost", it).apply() }
+        }
+        viewModelScope.launch {
+            playbackBoost.collect { prefs.edit().putFloat("playbackBoost", it).apply() }
+        }
+        viewModelScope.launch {
+            noiseSuppressorEnabled.collect { prefs.edit().putBoolean("noiseSuppressorEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            echoCancelerEnabled.collect { prefs.edit().putBoolean("echoCancelerEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            agcEnabled.collect { prefs.edit().putBoolean("agcEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            hpfEnabled.collect { prefs.edit().putBoolean("hpfEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            hpfCutoff.collect { prefs.edit().putFloat("hpfCutoff", it).apply() }
+        }
+        viewModelScope.launch {
+            limiterEnabled.collect { prefs.edit().putBoolean("limiterEnabled", it).apply() }
+        }
+        viewModelScope.launch {
+            limiterThreshold.collect { prefs.edit().putFloat("limiterThreshold", it).apply() }
+        }
+        viewModelScope.launch {
+            isSpeakerphoneOn.collect { prefs.edit().putBoolean("isSpeakerphoneOn", it).apply() }
+        }
+
         detectLocalIp()
 
         // Pruning job for dead discovery beacons
