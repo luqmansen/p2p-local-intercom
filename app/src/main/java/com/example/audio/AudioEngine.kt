@@ -19,7 +19,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 
-class AudioEngine {
+class AudioEngine(private val context: android.content.Context) {
+    private val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+
     companion object {
         const val TAG = "AudioEngine"
         const val SAMPLE_RATE = 16000
@@ -63,13 +65,15 @@ class AudioEngine {
     fun startRecording(onAudioChunk: (ByteArray) -> Unit) {
         if (recordJob != null) return
 
+        startCommunicationMode()
+
         val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, ENCODING)
         // Ensure a buffer of about ~40ms to keep latency low but reading robust
         val desiredBufferSize = max(bufferSize, 2048)
 
         try {
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 SAMPLE_RATE,
                 CHANNEL_IN,
                 ENCODING,
@@ -198,18 +202,21 @@ class AudioEngine {
         audioRecord?.release()
         audioRecord = null
         releaseAudioEffects()
+        checkAndResetAudioMode()
     }
 
     // --- Audio Playback ---
     fun startPlayback() {
         if (audioTrack != null) return
 
+        startCommunicationMode()
+
         val minPlayBufSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, ENCODING)
         val desiredBufferSize = max(minPlayBufSize, 4096)
 
         try {
             audioTrack = AudioTrack(
-                AudioManager.STREAM_MUSIC,
+                AudioManager.STREAM_VOICE_CALL,
                 SAMPLE_RATE,
                 CHANNEL_OUT,
                 ENCODING,
@@ -248,6 +255,33 @@ class AudioEngine {
         }
         audioTrack = null
         Log.d(TAG, "Playback stopped")
+        checkAndResetAudioMode()
+    }
+
+    private fun startCommunicationMode() {
+        try {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.isSpeakerphoneOn = true
+            Log.d(TAG, "Communication mode started: speakerphone on")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start communication mode", e)
+        }
+    }
+
+    private fun stopCommunicationMode() {
+        try {
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+            Log.d(TAG, "Communication mode stopped: normal")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to stop communication mode", e)
+        }
+    }
+
+    private fun checkAndResetAudioMode() {
+        if (audioRecord == null && audioTrack == null) {
+            stopCommunicationMode()
+        }
     }
 
     fun updateVoxSettings(enabled: Boolean, threshold: Float, hangoverMs: Long) {

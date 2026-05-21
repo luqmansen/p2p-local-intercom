@@ -8,6 +8,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -154,18 +156,26 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
     val targetPort by viewModel.serverLaunchPort.collectAsStateWithLifecycle()
     val localIp by viewModel.localIpAddress.collectAsStateWithLifecycle()
 
+    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    val scanTimeRemaining by viewModel.scanTimeRemaining.collectAsStateWithLifecycle()
+
     val focusManager = LocalFocusManager.current
+
+    val discoveredServersByUdp by viewModel.discoveredServers.collectAsStateWithLifecycle()
+    val scrollState = rememberScrollState()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clickable { focusManager.clearFocus() } // Tap outside clears keyboard
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(24.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Header Title with MeshVoice Pro styling and pulsating IP pill
             Row(
@@ -234,8 +244,7 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .padding(vertical = 16.dp)
+                    .padding(vertical = 8.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp)
@@ -413,6 +422,143 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                                         .testTag("target_port_input")
                                 )
                             }
+                        }
+                    }
+
+                    // --- Auto Discovered Servers Section ---
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    Button(
+                        onClick = { viewModel.toggleDiscoveryScan() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isScanning) TacticalCrimson else TacticalGreen
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("toggle_scan_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (isScanning) Icons.Default.Stop else Icons.Default.Search,
+                            contentDescription = "Scan Toggle",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isScanning) "STOP DISCOVERY SCAN (${scanTimeRemaining}s)" else "SCAN FOR LOCAL CHANNELS",
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "DETECTED CO-PEER CHANNELS:",
+                        color = TacticalGreen,
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    if (discoveredServersByUdp.isNotEmpty()) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            discoveredServersByUdp.forEach { server ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = SlateSurfaceVariant),
+                                    border = BorderStroke(1.dp, TacticalGreen.copy(alpha = 0.4f)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            viewModel.targetServerIp.value = server.ip
+                                            viewModel.serverLaunchPort.value = server.port
+                                            viewModel.startClientMode()
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Radio,
+                                                contentDescription = "Mesh Channel",
+                                                tint = TacticalGreen,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column {
+                                                Text(
+                                                    text = server.hostname,
+                                                    color = CombatWhite,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFamily = FontFamily.SansSerif
+                                                )
+                                                Text(
+                                                    text = "${server.ip}:${server.port}",
+                                                    color = TacticalMuted,
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.SansSerif
+                                                )
+                                            }
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "JOIN",
+                                                color = TacticalGreen,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.SansSerif
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowForward,
+                                                contentDescription = null,
+                                                tint = TacticalGreen,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SlateSurfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isScanning) Icons.Default.Sync else Icons.Default.Search,
+                                contentDescription = "Scanning status",
+                                tint = TacticalMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isScanning) "Listening for active hosts on port 50006..." else "No scans active. Tap SCAN above to search.",
+                                color = TacticalMuted,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.SansSerif
+                            )
                         }
                     }
                 }
@@ -709,6 +855,95 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.SansSerif
                             )
+                        }
+                    }
+                }
+            }
+
+            // Server-specific broadcast control card
+            if (mode == AppMode.SERVER) {
+                item {
+                    val isBroadcasting by viewModel.isBroadcasting.collectAsStateWithLifecycle()
+                    val broadcastTimeRemaining by viewModel.broadcastTimeRemaining.collectAsStateWithLifecycle()
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+                        border = BorderStroke(1.dp, TacticalGreen.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.SettingsInputAntenna,
+                                        contentDescription = "Beacon",
+                                        tint = if (isBroadcasting) TacticalAmber else TacticalMuted,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "DISCOVERY BEACON",
+                                        color = CombatWhite,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.SansSerif
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            color = if (isBroadcasting) Color(0xFFE6F4EA) else Color(0xFFF1F3F4),
+                                            shape = RoundedCornerShape(100.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = if (isBroadcasting) "LIVE BROADCAST (${broadcastTimeRemaining}s)" else "MUTED",
+                                        color = if (isBroadcasting) Color(0xFF137333) else TacticalMuted,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.SansSerif
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Enables automatic node discovery inside your coverage cell. Broadcasting is battery efficient and automatically sleeps.",
+                                fontSize = 11.sp,
+                                color = TacticalMuted,
+                                fontFamily = FontFamily.SansSerif,
+                                lineHeight = 16.sp
+                            )
+
+                            Button(
+                                onClick = { viewModel.toggleBroadcast() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isBroadcasting) TacticalCrimson else TacticalGreen
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().height(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isBroadcasting) Icons.Default.LeakAdd else Icons.Default.Sensors,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isBroadcasting) "STOP ADVERTISING DISCOVERY" else "EMIT DISCOVERY SIGNALS (1 Min)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.SansSerif
+                                )
+                            }
                         }
                     }
                 }

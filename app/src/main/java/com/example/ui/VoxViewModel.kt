@@ -2,7 +2,10 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
+import android.os.Build
+import com.example.audio.VoxService
 import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.util.Log
@@ -38,12 +41,19 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val context = application.applicationContext
-    private val audioEngine = AudioEngine()
+    private val audioEngine = AudioEngine(application)
 
     // --- State Variables ---
     val appMode = MutableStateFlow(AppMode.IDLE)
     val isConnected = MutableStateFlow(false)
     val localIpAddress = MutableStateFlow("Unknown")
+    val discoveredServers = MutableStateFlow<List<DiscoveredServer>>(emptyList())
+    
+    // On-demand scanning & broadcasting states
+    val isScanning = MutableStateFlow(false)
+    val scanTimeRemaining = MutableStateFlow(0)
+    val isBroadcasting = MutableStateFlow(false)
+    val broadcastTimeRemaining = MutableStateFlow(0)
     
     // User Configuration Input
     val nickname = MutableStateFlow("User_" + (100..999).random())
@@ -93,8 +103,172 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     private var voxServer: VoxServer? = null
     private var voxClient: VoxClient? = null
 
+    private var broadcastJob: Job? = null
+    private var discoveryJob: Job? = null
+    private var discoveryTimerJob: Job? = null
+
+    fun toggleBroadcast() {
+        if (appMode.value != AppMode.SERVER) return
+        if (isBroadcasting.value) {
+            stopBroadcasting()
+        } else {
+            startBroadcasting(localIpAddress.value, serverLaunchPort.value, nickname.value + " (Host)")
+        }
+    }
+
+    fun stopBroadcasting() {
+        broadcastJob?.cancel()
+        broadcastJob = null
+        isBroadcasting.value = false
+        broadcastTimeRemaining.value = 0
+    }
+
+    fun startBroadcasting(ip: String, port: Int, hostname: String) {
+        stopBroadcasting()
+        isBroadcasting.value = true
+        broadcastTimeRemaining.value = 60
+        addLog("[Broadcast] Advertising beacon started on port $port for 60s...")
+
+        broadcastJob = viewModelScope.launch(Dispatchers.IO) {
+            var socket: java.net.DatagramSocket? = null
+            try {
+                socket = java.net.DatagramSocket()
+                socket.broadcast = true
+                val address = java.net.InetAddress.getByName("255.255.255.255")
+                val message = "VOX_SERVER_BEACON:$ip:$port:$hostname"
+                val data = message.toByteArray()
+                val packet = java.net.DatagramPacket(data, data.size, address, 50006)
+                for (sec in 60 downTo 1) {
+                    if (appMode.value != AppMode.SERVER || !isBroadcasting.value) {
+                        break
+                    }
+                    broadcastTimeRemaining.value = sec
+                    if (sec % 2 == 0 || sec == 60) {
+                        try {
+                            socket.send(packet)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed sending UDP beacon", e)
+                        }
+                    }
+                    delay(1000)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting broadcast socket", e)
+            } finally {
+                socket?.close()
+                isBroadcasting.value = false
+                broadcastTimeRemaining.value = 0
+                addLog("[Broadcast] Live advertising expired.")
+            }
+        }
+    }
+
+    fun toggleDiscoveryScan() {
+        if (appMode.value != AppMode.IDLE) return
+        if (isScanning.value) {
+            stopDiscoveryScan()
+        } else {
+            startDiscoveryScan()
+        }
+    }
+
+    fun startDiscoveryScan() {
+        if (appMode.value != AppMode.IDLE) return
+        stopDiscoveryScan() // safety clean
+        isScanning.value = true
+        scanTimeRemaining.value = 30
+        
+        addLog("[Discovery] Scanning started for 30s...")
+        startDiscoveryListener()
+
+        discoveryTimerJob = viewModelScope.launch(Dispatchers.Default) {
+            for (sec in 30 downTo 1) {
+                if (appMode.value != AppMode.IDLE || !isScanning.value) break
+                scanTimeRemaining.value = sec
+                delay(1000)
+            }
+            stopDiscoveryScan()
+            addLog("[Discovery] Scanning stopped.")
+        }
+    }
+
+    fun stopDiscoveryScan() {
+        discoveryTimerJob?.cancel()
+        discoveryTimerJob = null
+        discoveryJob?.cancel()
+        discoveryJob = null
+        isScanning.value = false
+        scanTimeRemaining.value = 0
+    }
+
+    fun startDiscoveryListener() {
+        discoveryJob?.cancel()
+        discoveryJob = viewModelScope.launch(Dispatchers.IO) {
+            var socket: java.net.DatagramSocket? = null
+            try {
+                socket = java.net.DatagramSocket(50006)
+                socket.reuseAddress = true
+                val buffer = ByteArray(1024)
+                val packet = java.net.DatagramPacket(buffer, buffer.size)
+                while (appMode.value == AppMode.IDLE && isScanning.value) {
+                    try {
+                        socket.receive(packet)
+                        val msg = String(packet.data, 0, packet.length).trim()
+                        if (msg.startsWith("VOX_SERVER_BEACON:")) {
+                            val parts = msg.split(":")
+                            if (parts.size >= 4) {
+                                val srvIp = parts[1]
+                                val srvPort = parts[2].toIntOrNull() ?: DEFAULT_PORT
+                                val srvName = parts.subList(3, parts.size).joinToString(":")
+                                
+                                if (srvIp != localIpAddress.value) {
+                                    val now = System.currentTimeMillis()
+                                    val newSrv = DiscoveredServer(srvIp, srvPort, srvName, now)
+                                    val current = discoveredServers.value.toMutableList()
+                                    val idx = current.indexOfFirst { it.ip == srvIp && it.port == srvPort }
+                                    if (idx != -1) {
+                                        current[idx] = newSrv
+                                    } else {
+                                        current.add(0, newSrv)
+                                        addLog("[Discovery] Found $srvName online at $srvIp:$srvPort")
+                                    }
+                                    discoveredServers.value = current
+                                    
+                                    viewModelScope.launch(Dispatchers.Main) {
+                                        stopDiscoveryScan()
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: java.net.SocketException) {
+                        break
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Discovery read error", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not launch discovery receiver on port 50006", e)
+            } finally {
+                socket?.close()
+            }
+        }
+    }
+
     init {
         detectLocalIp()
+
+        // Pruning job for dead discovery beacons
+        viewModelScope.launch(Dispatchers.Default) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val current = discoveredServers.value
+                val active = current.filter { now - it.lastSeenTime < 6000 }
+                if (active.size != current.size) {
+                    discoveredServers.value = active
+                }
+                delay(1500)
+            }
+        }
 
         // Create background coroutine to monitor active speakers and reset speaker state after silence timeout
         voiceLevelUpdaterJob = viewModelScope.launch(Dispatchers.Default) {
@@ -124,6 +298,8 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         voiceLevelUpdaterJob.cancel()
+        broadcastJob?.cancel()
+        discoveryJob?.cancel()
         stopAll()
     }
 
@@ -163,6 +339,8 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     fun startServerMode() {
         if (appMode.value != AppMode.IDLE) return
         appMode.value = AppMode.SERVER
+        discoveryJob?.cancel()
+        discoveredServers.value = emptyList()
         addLog("Initializing Server Mode...")
         detectLocalIp()
 
@@ -190,6 +368,19 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                 isConnected.value = true
                 addLog("Server running.")
 
+                startBroadcasting(localIpAddress.value, port, nickname.value + " (Host)")
+
+                // Launch Foreground Service to ensure screen off / background continuation
+                val serviceIntent = Intent(context, VoxService::class.java).apply {
+                    action = VoxService.ACTION_START
+                    putExtra(VoxService.EXTRA_STATUS, "Hosting on port $port")
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+
                 // Start audio operations for host
                 audioEngine.startPlayback()
                 audioEngine.startRecording { bytes ->
@@ -205,7 +396,9 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startClientMode() {
         if (appMode.value != AppMode.IDLE) return
+        stopDiscoveryScan() // Disable any pending scans immediately
         appMode.value = AppMode.CLIENT
+        discoveredServers.value = emptyList()
         addLog("Connecting to server...")
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -220,6 +413,17 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                     onConnected = { assignedId ->
                         isConnected.value = true
                         addLog("Connected. ID: $assignedId")
+
+                        // Launch Foreground Service to ensure screen off / background continuation
+                        val serviceIntent = Intent(context, VoxService::class.java).apply {
+                            action = VoxService.ACTION_START
+                            putExtra(VoxService.EXTRA_STATUS, "Connected to: $serverIp")
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(serviceIntent)
+                        } else {
+                            context.startService(serviceIntent)
+                        }
                         
                         // Start recording and playback
                         audioEngine.startPlayback()
@@ -257,7 +461,21 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     fun stopAll() {
         viewModelScope.launch(Dispatchers.IO) {
             addLog("Shutting down audio engine and network sockets...")
+
+            // Stop Foreground Service
+            try {
+                val serviceIntent = Intent(context, VoxService::class.java).apply {
+                    action = VoxService.ACTION_STOP
+                }
+                context.startService(serviceIntent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping VoxService", e)
+            }
             
+            // Stop scanning and broadcasting timers
+            stopDiscoveryScan()
+            stopBroadcasting()
+
             // Stop sound
             audioEngine.stopRecording()
             audioEngine.stopPlayback()
@@ -342,4 +560,11 @@ data class UIPeerInfo(
     val nickname: String,
     val isSelf: Boolean,
     val isSpeaking: Boolean
+)
+
+data class DiscoveredServer(
+    val ip: String,
+    val port: Int,
+    val hostname: String,
+    val lastSeenTime: Long
 )
