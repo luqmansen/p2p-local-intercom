@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.service.quicksettings.TileService
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
@@ -26,6 +27,9 @@ class VoxService : Service() {
         const val ACTION_START = "com.example.action.START"
         const val ACTION_STOP = "com.example.action.STOP"
         const val EXTRA_STATUS = "com.example.extra.STATUS"
+
+        @Volatile var isServiceRunning = false
+        @Volatile var onServiceStopped: (() -> Unit)? = null
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -52,6 +56,7 @@ class VoxService : Service() {
     }
 
     private fun startForegroundServiceWithNotification(statusText: String) {
+        isServiceRunning = true
         createNotificationChannel()
 
         val notificationIntent = Intent(this, MainActivity::class.java)
@@ -62,6 +67,16 @@ class VoxService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val stopIntent = Intent(this, VoxService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("MeshVoice Walkie-Talkie")
             .setContentText(statusText)
@@ -69,6 +84,7 @@ class VoxService : Service() {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopPendingIntent)
             .build()
 
         try {
@@ -89,6 +105,16 @@ class VoxService : Service() {
             } catch (ex: Exception) {
                 Log.e(TAG, "Double error startForeground", ex)
             }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                TileService.requestListeningState(
+                    applicationContext,
+                    android.content.ComponentName(applicationContext, VoxLnkTileService::class.java)
+                )
+            }
+        } catch (e: Exception) {
+            // ignore
         }
     }
 
@@ -139,6 +165,19 @@ class VoxService : Service() {
 
     private fun stopServiceGracefully() {
         Log.d(TAG, "Stopping service and releasing locks")
+        isServiceRunning = false
+        onServiceStopped?.invoke()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                TileService.requestListeningState(
+                    applicationContext,
+                    android.content.ComponentName(applicationContext, VoxLnkTileService::class.java)
+                )
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()

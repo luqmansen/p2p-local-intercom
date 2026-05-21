@@ -1,6 +1,7 @@
 package com.example.audio
 
 import android.annotation.SuppressLint
+import android.media.ToneGenerator
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -44,6 +45,9 @@ class AudioEngine(private val context: android.content.Context) {
     @Volatile var hpfCutoff: Float = 120f             // Default HPF cutoff (Hz)
     @Volatile var isLimiterEnabled: Boolean = true
     @Volatile var limiterThreshold: Float = 0.8f      // Default Soft Limiter threshold (80% full scale)
+    @Volatile var isAcousticCuesEnabled: Boolean = true
+
+    private var toneGen: ToneGenerator? = null
 
     // State for HPF to maintain continuity across audio buffers
     private var lastHpfInput: Float = 0f
@@ -188,7 +192,14 @@ class AudioEngine(private val context: android.content.Context) {
                         true
                     }
 
+                    val previousTransmitting = _isTransmitting.value
                     _isTransmitting.value = voiceActive
+
+                    if (voiceActive && !previousTransmitting) {
+                        playTxStartTone()
+                    } else if (!voiceActive && previousTransmitting) {
+                        playTxEndTone()
+                    }
 
                     if (voiceActive) {
                         // Convert short buffer to byte array (endianness is little-endian on Android ARM)
@@ -260,6 +271,7 @@ class AudioEngine(private val context: android.content.Context) {
         audioRecord?.release()
         audioRecord = null
         releaseAudioEffects()
+        releaseToneGenerator()
         checkAndResetAudioMode()
     }
 
@@ -433,6 +445,46 @@ class AudioEngine(private val context: android.content.Context) {
         audioRecord?.audioSessionId?.let { sessionId ->
             releaseAudioEffects()
             setupAudioEffects(sessionId)
+        }
+    }
+
+    private fun initToneGenerator() {
+        if (toneGen == null) {
+            try {
+                // Play over STREAM_MUSIC to work properly with all output routes
+                toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize ToneGenerator", e)
+            }
+        }
+    }
+
+    fun playTxStartTone() {
+        if (!isAcousticCuesEnabled) return
+        try {
+            initToneGenerator()
+            toneGen?.startTone(ToneGenerator.TONE_PROP_PROMPT, 100)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing TX start tone", e)
+        }
+    }
+
+    fun playTxEndTone() {
+        if (!isAcousticCuesEnabled) return
+        try {
+            initToneGenerator()
+            toneGen?.startTone(ToneGenerator.TONE_PROP_ACK, 120)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing TX end tone", e)
+        }
+    }
+
+    private fun releaseToneGenerator() {
+        try {
+            toneGen?.release()
+            toneGen = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing ToneGenerator", e)
         }
     }
 }

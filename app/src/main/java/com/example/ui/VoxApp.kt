@@ -1239,6 +1239,7 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
     val hpfCutoff by viewModel.hpfCutoff.collectAsStateWithLifecycle()
     val limiterEnabled by viewModel.limiterEnabled.collectAsStateWithLifecycle()
     val limiterThreshold by viewModel.limiterThreshold.collectAsStateWithLifecycle()
+    val acousticCues by viewModel.acousticCuesEnabled.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -1275,6 +1276,39 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
             Switch(
                 checked = isVoxOn,
                 onCheckedChange = { viewModel.toggleVox(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = TacticalGreen,
+                    checkedTrackColor = TacticalGreen.copy(alpha = 0.3f),
+                    uncheckedThumbColor = TacticalMuted,
+                    uncheckedTrackColor = SlateBackground
+                )
+            )
+        }
+
+        // Switch for Acoustic Cues (Roger & PTT beeps)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "ACOUSTIC CUES (PTT / ROGER BEEPS)",
+                    color = CombatWhite,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = "Chirp feedback on transmission start and end",
+                    color = TacticalMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+            }
+            Switch(
+                checked = acousticCues,
+                onCheckedChange = { viewModel.toggleAcousticCues(it) },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = TacticalGreen,
                     checkedTrackColor = TacticalGreen.copy(alpha = 0.3f),

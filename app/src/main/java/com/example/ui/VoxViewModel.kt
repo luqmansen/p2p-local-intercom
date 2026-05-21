@@ -84,6 +84,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     val hpfCutoff = MutableStateFlow(audioEngine.hpfCutoff)
     val limiterEnabled = MutableStateFlow(audioEngine.isLimiterEnabled)
     val limiterThreshold = MutableStateFlow(audioEngine.limiterThreshold)
+    val acousticCuesEnabled = MutableStateFlow(audioEngine.isAcousticCuesEnabled)
 
     // Real-time Mic Amplitude
     val realtimeAmplitude: StateFlow<Float> = audioEngine.realtimeAmplitude
@@ -293,22 +294,22 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isVoxEnabled = storedVoxEnabled
 
         // 5. VOX threshold
-        val storedVoxThreshold = prefs.getFloat("voxThreshold", audioEngine.voxThreshold)
+        val storedVoxThreshold = prefs.getFloat("voxThreshold", audioEngine.voxThreshold).coerceIn(0.005f, 0.30f)
         voxThreshold.value = storedVoxThreshold
         audioEngine.voxThreshold = storedVoxThreshold
 
         // 6. VOX hangover
-        val storedVoxHangover = prefs.getLong("voxHangoverMs", audioEngine.voxHangoverMs)
+        val storedVoxHangover = prefs.getLong("voxHangoverMs", audioEngine.voxHangoverMs).coerceIn(200L, 2000L)
         voxHangoverMs.value = storedVoxHangover
         audioEngine.voxHangoverMs = storedVoxHangover
 
         // 7. micBoost
-        val storedMicBoost = prefs.getFloat("micBoost", audioEngine.micBoostFactor)
+        val storedMicBoost = prefs.getFloat("micBoost", audioEngine.micBoostFactor).coerceIn(1.0f, 5.0f)
         micBoost.value = storedMicBoost
         audioEngine.micBoostFactor = storedMicBoost
 
         // 8. playbackBoost
-        val storedPlaybackBoost = prefs.getFloat("playbackBoost", audioEngine.playbackBoostFactor)
+        val storedPlaybackBoost = prefs.getFloat("playbackBoost", audioEngine.playbackBoostFactor).coerceIn(1.0f, 5.0f)
         playbackBoost.value = storedPlaybackBoost
         audioEngine.playbackBoostFactor = storedPlaybackBoost
 
@@ -336,7 +337,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isHpfEnabled = storedHpfEnabled
 
         // 13. hpfCutoff
-        val storedHpfCutoff = prefs.getFloat("hpfCutoff", audioEngine.hpfCutoff)
+        val storedHpfCutoff = prefs.getFloat("hpfCutoff", audioEngine.hpfCutoff).coerceIn(60f, 300f)
         hpfCutoff.value = storedHpfCutoff
         audioEngine.hpfCutoff = storedHpfCutoff
 
@@ -346,13 +347,18 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isLimiterEnabled = storedLimiterEnabled
 
         // 15. limiterThreshold
-        val storedLimiterThreshold = prefs.getFloat("limiterThreshold", audioEngine.limiterThreshold)
+        val storedLimiterThreshold = prefs.getFloat("limiterThreshold", audioEngine.limiterThreshold).coerceIn(0.5f, 0.99f)
         limiterThreshold.value = storedLimiterThreshold
         audioEngine.limiterThreshold = storedLimiterThreshold
 
         // 16. isSpeakerphoneOn
         val storedSpeakerphone = prefs.getBoolean("isSpeakerphoneOn", true) // Default loudspeaker is true
         audioEngine.setSpeakerphoneOn(storedSpeakerphone)
+
+        // 17. acousticCuesEnabled
+        val storedAcousticCues = prefs.getBoolean("acousticCuesEnabled", audioEngine.isAcousticCuesEnabled)
+        acousticCuesEnabled.value = storedAcousticCues
+        audioEngine.isAcousticCuesEnabled = storedAcousticCues
 
         // Launch watchers to save any config changes
         viewModelScope.launch {
@@ -402,6 +408,9 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             isSpeakerphoneOn.collect { prefs.edit().putBoolean("isSpeakerphoneOn", it).apply() }
+        }
+        viewModelScope.launch {
+            acousticCuesEnabled.collect { prefs.edit().putBoolean("acousticCuesEnabled", it).apply() }
         }
 
         detectLocalIp()
@@ -654,6 +663,12 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Dynamic Parameters Updates ---
+
+    fun toggleAcousticCues(enabled: Boolean) {
+        acousticCuesEnabled.value = enabled
+        audioEngine.isAcousticCuesEnabled = enabled
+        addLog("Acoustic Cues (Beep Feeds): " + if (enabled) "Enabled" else "Muted")
+    }
 
     fun toggleVox(enabled: Boolean) {
         voxEnabled.value = enabled
