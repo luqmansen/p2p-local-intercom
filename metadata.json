@@ -1,0 +1,6 @@
+{
+  "name": "VoxLnk",
+  "description": "A local hotspot voice-activated walkie-talkie for group audio streaming without internet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
