@@ -70,6 +70,13 @@ fun VoxApp(viewModel: VoxViewModel) {
         color = SlateBackground
     ) {
         val micGranted = permissionsState.permissions.find { it.permission == Manifest.permission.RECORD_AUDIO }?.status?.isGranted == true
+        val allGranted = permissionsState.allPermissionsGranted
+
+        LaunchedEffect(micGranted, allGranted) {
+            if (micGranted && !allGranted) {
+                permissionsState.launchMultiplePermissionRequest()
+            }
+        }
 
         if (micGranted) {
             VoxMainContent(viewModel)

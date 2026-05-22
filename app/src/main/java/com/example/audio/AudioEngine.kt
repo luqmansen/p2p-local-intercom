@@ -129,6 +129,12 @@ class AudioEngine(private val context: android.content.Context) {
             while (audioRecord != null && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val readResult = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
                 if (readResult > 0) {
+                    val nowTime = System.currentTimeMillis()
+                    if (nowTime < tonePlayingUntilMillis) {
+                        for (i in 0 until readResult) {
+                            shortBuffer[i] = 0
+                        }
+                    }
                     // 1. High Pass Filter (HPF) to remove low-frequency rumble & engine hums
                     if (isHpfEnabled) {
                         val alpha = hpfAlpha
@@ -463,6 +469,7 @@ class AudioEngine(private val context: android.content.Context) {
     fun playTxStartTone() {
         if (!isAcousticCuesEnabled) return
         try {
+            tonePlayingUntilMillis = System.currentTimeMillis() + 300L
             initToneGenerator()
             toneGen?.startTone(ToneGenerator.TONE_PROP_PROMPT, 100)
         } catch (e: Exception) {
@@ -473,6 +480,7 @@ class AudioEngine(private val context: android.content.Context) {
     fun playTxEndTone() {
         if (!isAcousticCuesEnabled) return
         try {
+            tonePlayingUntilMillis = System.currentTimeMillis() + 320L
             initToneGenerator()
             toneGen?.startTone(ToneGenerator.TONE_PROP_ACK, 120)
         } catch (e: Exception) {
