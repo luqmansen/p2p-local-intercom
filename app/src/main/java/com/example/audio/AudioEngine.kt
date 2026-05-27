@@ -4,6 +4,11 @@ import android.annotation.SuppressLint
 import android.media.ToneGenerator
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
@@ -371,25 +376,141 @@ class AudioEngine(private val context: android.content.Context) {
         checkAndResetAudioMode()
     }
 
+    private var routingReceiver: BroadcastReceiver? = null
+    private var communicationDeviceListener: Any? = null
+
+    private fun registerRoutingReceiver() {
+        if (routingReceiver != null) return
+        routingReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                val action = intent?.action ?: return
+                Log.d(TAG, "Audio routing broadcast received: $action")
+                // Whenever there is a change, re-apply the current routing to pick the best connected device
+                setSpeakerphoneOn(_isSpeakerphoneOn.value)
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_HEADSET_PLUG)
+            addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            addAction("android.bluetooth.adapter.action.CONNECTION_STATE_CHANGED")
+            addAction("android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED")
+        }
+        try {
+            context.registerReceiver(routingReceiver, filter)
+            Log.d(TAG, "Audio routing broadcast receiver registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register audio routing receiver", e)
+        }
+    }
+
+    private fun unregisterRoutingReceiver() {
+        routingReceiver?.let {
+            try {
+                context.unregisterReceiver(it)
+                Log.d(TAG, "Audio routing broadcast receiver unregistered")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to unregister audio routing receiver", e)
+            }
+        }
+        routingReceiver = null
+    }
+
+    @SuppressLint("NewApi")
+    private fun registerCommunicationDeviceListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (communicationDeviceListener != null) return
+            try {
+                val listener = AudioManager.OnCommunicationDeviceChangedListener { device ->
+                    Log.d(TAG, "Communication device changed via listener: ${device?.let { getDeviceTypeName(it.type) } ?: "NONE"}")
+                }
+                communicationDeviceListener = listener
+                audioManager.addOnCommunicationDeviceChangedListener(context.mainExecutor, listener)
+                Log.d(TAG, "Registered OnCommunicationDeviceChangedListener")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register OnCommunicationDeviceChangedListener", e)
+            }
+        }
+    }
+
+    @SuppressLint("NewApi")
+    private fun unregisterCommunicationDeviceListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val listener = communicationDeviceListener as? AudioManager.OnCommunicationDeviceChangedListener
+            if (listener != null) {
+                try {
+                    audioManager.removeOnCommunicationDeviceChangedListener(listener)
+                    Log.d(TAG, "Unregistered OnCommunicationDeviceChangedListener")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to unregister OnCommunicationDeviceChangedListener", e)
+                }
+            }
+            communicationDeviceListener = null
+        }
+    }
+
+    private fun selectBestCommunicationDevice(devices: List<AudioDeviceInfo>): AudioDeviceInfo? {
+        // Preferred order of non-speaker communication devices:
+        // 1. BLE Headset (Bluetooth Low Energy Audio)
+        val ble = devices.find { it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
+        if (ble != null) return ble
+
+        // 2. Bluetooth SCO
+        val bluetoothSco = devices.find { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+        if (bluetoothSco != null) return bluetoothSco
+
+        // 3. USB Headset
+        val usbHeadset = devices.find { it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
+        if (usbHeadset != null) return usbHeadset
+
+        // 4. Wired Headset
+        val wiredHeadset = devices.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }
+        if (wiredHeadset != null) return wiredHeadset
+
+        // 5. Wired Headphones (no mic)
+        val wiredHeadphones = devices.find { it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES }
+        if (wiredHeadphones != null) return wiredHeadphones
+
+        // 6. Built-in Earpiece
+        val earpiece = devices.find { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+        if (earpiece != null) return earpiece
+
+        return null
+    }
+
+    private fun getDeviceTypeName(type: Int): String {
+        return when (type) {
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "BUILTIN_EARPIECE"
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "BUILTIN_SPEAKER"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "WIRED_HEADSET"
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "WIRED_HEADPHONES"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BLUETOOTH_SCO"
+            AudioDeviceInfo.TYPE_BLE_HEADSET -> "BLE_HEADSET"
+            AudioDeviceInfo.TYPE_USB_HEADSET -> "USB_HEADSET"
+            else -> "UNKNOWN ($type)"
+        }
+    }
+
     fun setSpeakerphoneOn(on: Boolean) {
         _isSpeakerphoneOn.value = on
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val devices = audioManager.availableCommunicationDevices
-                val speakerDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                val earpieceDevice = devices.find { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
                 if (on) {
+                    val speakerDevice = devices.find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
                     if (speakerDevice != null) {
-                        audioManager.setCommunicationDevice(speakerDevice)
-                        Log.d(TAG, "Successfully set communication device to SPEAKER")
+                        audioManager.clearCommunicationDevice()
+                        val success = audioManager.setCommunicationDevice(speakerDevice)
+                        Log.d(TAG, "Successfully set communication device to Speaker (Success: $success)")
                     } else {
                         @Suppress("DEPRECATION")
                         audioManager.isSpeakerphoneOn = true
                     }
                 } else {
-                    if (earpieceDevice != null) {
-                        audioManager.setCommunicationDevice(earpieceDevice)
-                        Log.d(TAG, "Successfully set communication device to EARPIECE")
+                    val targetDevice = selectBestCommunicationDevice(devices)
+                    if (targetDevice != null) {
+                        audioManager.clearCommunicationDevice()
+                        val success = audioManager.setCommunicationDevice(targetDevice)
+                        Log.d(TAG, "Successfully set communication device to: ${getDeviceTypeName(targetDevice.type)} (Success: $success)")
                     } else {
                         audioManager.clearCommunicationDevice()
                         @Suppress("DEPRECATION")
@@ -398,17 +519,37 @@ class AudioEngine(private val context: android.content.Context) {
                 }
             } else {
                 @Suppress("DEPRECATION")
-                audioManager.isSpeakerphoneOn = on
+                if (on) {
+                    if (audioManager.isBluetoothScoOn) {
+                        audioManager.isBluetoothScoOn = false
+                        audioManager.stopBluetoothSco()
+                    }
+                    audioManager.isSpeakerphoneOn = true
+                } else {
+                    if (audioManager.isBluetoothScoAvailableOffCall) {
+                        audioManager.isSpeakerphoneOn = false
+                        audioManager.isBluetoothScoOn = true
+                        audioManager.startBluetoothSco()
+                        Log.d(TAG, "Legacy routing: Started Bluetooth SCO")
+                    } else {
+                        audioManager.isBluetoothScoOn = false
+                        audioManager.stopBluetoothSco()
+                        audioManager.isSpeakerphoneOn = false
+                        Log.d(TAG, "Legacy routing: Normal/Earpiece mode")
+                    }
+                }
             }
             Log.d(TAG, "Speakerphone set to $on")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to toggle speakerphone", e)
+            Log.e(TAG, "Failed to toggle speakerphone/route audio", e)
         }
     }
 
     private fun startCommunicationMode() {
         try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            registerRoutingReceiver()
+            registerCommunicationDeviceListener()
             setSpeakerphoneOn(_isSpeakerphoneOn.value)
             Log.d(TAG, "Communication mode started")
         } catch (e: Exception) {
@@ -419,11 +560,18 @@ class AudioEngine(private val context: android.content.Context) {
     private fun stopCommunicationMode() {
         try {
             audioManager.mode = AudioManager.MODE_NORMAL
+            unregisterRoutingReceiver()
+            unregisterCommunicationDeviceListener()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 audioManager.clearCommunicationDevice()
             } else {
                 @Suppress("DEPRECATION")
                 audioManager.isSpeakerphoneOn = false
+                @Suppress("DEPRECATION")
+                if (audioManager.isBluetoothScoOn) {
+                    audioManager.isBluetoothScoOn = false
+                    audioManager.stopBluetoothSco()
+                }
             }
             Log.d(TAG, "Communication mode stopped: normal")
         } catch (e: Exception) {
