@@ -16,3 +16,7 @@
 local.properties
 .env
 debug.keystore
+# Release signing material — keep local, never commit
+my-upload-key.jks
+keystore-password.txt
+keystore.b64
