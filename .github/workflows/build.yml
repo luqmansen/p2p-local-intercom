@@ -1,0 +1,114 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Toolchain versions validated to build this project (AGP 9.1.1 / compileSdk 36.1 / Kotlin 2.2.10).
+  ANDROID_HOME: /opt/android-sdk
+  ANDROID_SDK_ROOT: /opt/android-sdk
+  CMDLINE_TOOLS_VERSION: "13114758"
+  ANDROID_PLATFORM: "platforms;android-36.1"
+  ANDROID_BUILD_TOOLS: "build-tools;36.1.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # One-line toolchain image: JDK 21 (required by AGP 9). The Android SDK is layered on top,
+    # because platform 36.1 / build-tools 36.1.0 are too new to exist in prebuilt Android images.
+    container:
+      image: eclipse-temurin:21-jdk
+
+    steps:
+      - name: Install base packages
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git unzip curl ca-certificates
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}
+          key: android-sdk-${{ env.CMDLINE_TOOLS_VERSION }}-${{ env.ANDROID_PLATFORM }}-${{ env.ANDROID_BUILD_TOOLS }}
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle.kts') }}
+          restore-keys: |
+            gradle-
+
+      - name: Install Android SDK
+        run: |
+          set -euo pipefail
+          if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            curl -fsSL -o /tmp/cmdtools.zip \
+              "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+            unzip -q /tmp/cmdtools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          fi
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+
+      - name: Generate debug keystore
+        run: |
+          # The app's debugConfig signing config expects a keystore at the project root.
+          # It is git-ignored, so we create a deterministic one for CI.
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Stage APK
+        id: stage
+        run: |
+          mkdir -p dist
+          APK="voxlnk-v1.0.${{ github.run_number }}-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/$APK"
+          echo "apk_path=dist/$APK" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stage.outputs.apk_name }}
+          path: ${{ steps.stage.outputs.apk_path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: VoxLnk v1.0.${{ github.run_number }}
+          body: |
+            Automated debug build from `${{ github.sha }}`.
+
+            Install on a device with USB debugging / unknown sources enabled:
+            `adb install ${{ steps.stage.outputs.apk_name }}`
+          files: ${{ steps.stage.outputs.apk_path }}
+          fail_on_unmatched_files: true
