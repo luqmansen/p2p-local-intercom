@@ -33,6 +33,10 @@ enum class AppMode {
     IDLE, SERVER, CLIENT
 }
 
+enum class AppThemeChoice {
+    SYSTEM, LIGHT, DARK
+}
+
 class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -45,6 +49,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- State Variables ---
     val appMode = MutableStateFlow(AppMode.IDLE)
+    val themeChoice = MutableStateFlow(AppThemeChoice.SYSTEM)
     val isConnected = MutableStateFlow(false)
     val localIpAddress = MutableStateFlow("Unknown")
     val discoveredServers = MutableStateFlow<List<DiscoveredServer>>(emptyList())
@@ -271,6 +276,14 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         // Load configurations from SharedPreferences
         val prefs = context.getSharedPreferences("vox_prefs", Context.MODE_PRIVATE)
 
+        // 0. Theme Choice
+        val storedTheme = prefs.getString("themeChoice", AppThemeChoice.SYSTEM.name) ?: AppThemeChoice.SYSTEM.name
+        try {
+            themeChoice.value = AppThemeChoice.valueOf(storedTheme)
+        } catch (e: Exception) {
+            themeChoice.value = AppThemeChoice.SYSTEM
+        }
+
         // 1. Nickname
         val storedNick = prefs.getString("nickname", null)
         if (storedNick != null) {
@@ -362,6 +375,9 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isAcousticCuesEnabled = storedAcousticCues
 
         // Launch watchers to save any config changes
+        viewModelScope.launch {
+            themeChoice.collect { prefs.edit().putString("themeChoice", it.name).apply() }
+        }
         viewModelScope.launch {
             nickname.collect { prefs.edit().putString("nickname", it).apply() }
         }
@@ -702,6 +718,11 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Dynamic Parameters Updates ---
+
+    fun setThemeChoice(choice: AppThemeChoice) {
+        themeChoice.value = choice
+        addLog("Application Theme changed to: ${choice.name}")
+    }
 
     fun toggleAcousticCues(enabled: Boolean) {
         acousticCuesEnabled.value = enabled

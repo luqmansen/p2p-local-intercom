@@ -41,19 +41,67 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 // --- High Density Color Palette (MeshVoice Pro Theme) ---
-val SlateBackground = Color(0xFFFDFBFF)      // Whole container background (off-white blue shimmer)
-val SlateSurface = Color(0xFFFFFFFF)         // Pure white cards / paper surfaces
-val SlateSurfaceVariant = Color(0xFFF1F0F4)  // Light gray containers / nav backgrounds
-val TacticalGreen = Color(0xFF0061A4)        // Rich primary M3 brand blue
-val TacticalAmber = Color(0xFF0061A4)        // Standard active blue for high density
-val TacticalMuted = Color(0xFF74777F)        // Classy slate-gray muted text
-val TacticalCrimson = Color(0xFFBA1A1A)      // Red warning / actions from design
-val TacticalBorder = Color(0xFFC4C6CF)       // Light outlined borders from design
-val CombatWhite = Color(0xFF1A1C1E)          // Deep charcoal text for readability
+data class TacticalColorLayout(
+    val SlateBackground: Color,
+    val SlateSurface: Color,
+    val SlateSurfaceVariant: Color,
+    val TacticalGreen: Color,
+    val TacticalAmber: Color,
+    val TacticalMuted: Color,
+    val TacticalCrimson: Color,
+    val TacticalBorder: Color,
+    val CombatWhite: Color
+)
+
+val LightTacticalColors = TacticalColorLayout(
+    SlateBackground = Color(0xFFFDFBFF),      // Whole container background (off-white blue shimmer)
+    SlateSurface = Color(0xFFFFFFFF),         // Pure white cards / paper surfaces
+    SlateSurfaceVariant = Color(0xFFF1F0F4),  // Light gray containers / nav backgrounds
+    TacticalGreen = Color(0xFF0061A4),        // Rich primary M3 brand blue
+    TacticalAmber = Color(0xFF0061A4),        // Standard active blue for high density
+    TacticalMuted = Color(0xFF74777F) ,       // Classy slate-gray muted text
+    TacticalCrimson = Color(0xFFBA1A1A),      // Red warning / actions from design
+    TacticalBorder = Color(0xFFC4C6CF),       // Light outlined borders from design
+    CombatWhite = Color(0xFF1A1C1E)           // Deep charcoal text for readability
+)
+
+val DarkTacticalColors = TacticalColorLayout(
+    SlateBackground = Color(0xFF0C0E10),       // Deep matte stealth background
+    SlateSurface = Color(0xFF13171B),          // Deep gray card surfaces
+    SlateSurfaceVariant = Color(0xFF1B2024),   // Secondary inputs / backgrounds
+    TacticalGreen = Color(0xFF38B000),         // NVG (Night Vision Goggles) high-intensity tactical green
+    TacticalAmber = Color(0xFFFF9F1C),         // Warning amber indicator / status
+    TacticalMuted = Color(0xFF9095A0),         // Slate muted typography
+    TacticalCrimson = Color(0xFFFF5252),       // Warning active crimson
+    TacticalBorder = Color(0xFF2B3238),        // Discrete dark border
+    CombatWhite = Color(0xFFE4E7EB)            // Sharp white text for contrast
+)
+
+var currentTacticalColorsState by mutableStateOf(LightTacticalColors)
+
+val SlateBackground: Color get() = currentTacticalColorsState.SlateBackground
+val SlateSurface: Color get() = currentTacticalColorsState.SlateSurface
+val SlateSurfaceVariant: Color get() = currentTacticalColorsState.SlateSurfaceVariant
+val TacticalGreen: Color get() = currentTacticalColorsState.TacticalGreen
+val TacticalAmber: Color get() = currentTacticalColorsState.TacticalAmber
+val TacticalMuted: Color get() = currentTacticalColorsState.TacticalMuted
+val TacticalCrimson: Color get() = currentTacticalColorsState.TacticalCrimson
+val TacticalBorder: Color get() = currentTacticalColorsState.TacticalBorder
+val CombatWhite: Color get() = currentTacticalColorsState.CombatWhite
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun VoxApp(viewModel: VoxViewModel) {
+    val themeChoiceState by viewModel.themeChoice.collectAsStateWithLifecycle()
+    val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val isDark = when (themeChoiceState) {
+        AppThemeChoice.SYSTEM -> isSystemDark
+        AppThemeChoice.LIGHT -> false
+        AppThemeChoice.DARK -> true
+    }
+    
+    currentTacticalColorsState = if (isDark) DarkTacticalColors else LightTacticalColors
+
     val permissions = remember {
         buildList {
             add(Manifest.permission.RECORD_AUDIO)
@@ -1286,6 +1334,52 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Segmented Theme Chooser
+        val currentThemeChoice by viewModel.themeChoice.collectAsStateWithLifecycle()
+        Column {
+            Text(
+                text = "SYSTEM INTERFACE THEME",
+                color = CombatWhite,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.SansSerif
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppThemeChoice.values().forEach { choice ->
+                    val isSelected = currentThemeChoice == choice
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) TacticalGreen else SlateSurfaceVariant)
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) TacticalGreen else TacticalBorder,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.setThemeChoice(choice) }
+                            .testTag("theme_choice_${choice.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = choice.name,
+                            color = if (isSelected) Color.White else TacticalMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.SansSerif
+                        )
+                    }
+                }
+            }
+        }
+
+        Divider(color = TacticalBorder)
+
         // Switch for VOX
         Row(
             modifier = Modifier.fillMaxWidth(),
