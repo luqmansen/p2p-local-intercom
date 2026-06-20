@@ -76,7 +76,21 @@ class AudioEngine(private val context: android.content.Context) {
     // Audio Capture and Render
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
-    @Volatile private var totalFramesWritten: Long = 0L
+
+    // --- Playback jitter buffer ---
+    // Received audio is queued here and drained by a dedicated playback thread.
+    // This decouples the network read thread from the (blocking) AudioTrack write,
+    // and lets us drop the oldest audio when we fall behind so that end-to-end
+    // latency stays bounded instead of growing without limit (the cause of the
+    // "audio delay keeps increasing the longer you talk" bug).
+    private val playbackQueue = ArrayDeque<ByteArray>()
+    private val playbackLock = Object()
+    private var queuedBytes = 0
+    // Maximum audio allowed to sit in the jitter buffer before we start dropping the
+    // oldest chunks. 2 bytes per frame (16-bit mono). ~200ms of headroom.
+    private val maxBufferedBytes = SAMPLE_RATE * 2 * 200 / 1000
+    private var playbackThread: Thread? = null
+    @Volatile private var playbackRunning = false
 
     // Audio FX
     private var noiseSuppressor: NoiseSuppressor? = null
@@ -308,8 +322,8 @@ class AudioEngine(private val context: android.content.Context) {
             )
 
             if (audioTrack?.state == AudioTrack.STATE_INITIALIZED) {
-                totalFramesWritten = 0L
                 audioTrack?.play()
+                startPlaybackThread()
                 Log.d(TAG, "Playback started successfully")
             } else {
                 Log.e(TAG, "AudioTrack state not initialized")
@@ -319,72 +333,129 @@ class AudioEngine(private val context: android.content.Context) {
         }
     }
 
+    // Called from the network read thread. Must never block: it only enqueues the
+    // chunk and bounds the backlog so latency cannot grow without limit.
     fun playAudio(data: ByteArray) {
-        val track = audioTrack
-        if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-            try {
-                // Eliminate potential audio lagging by checking the current buffered frame level.
-                // 1 frame = 2 bytes (1 sample in 16-bit mono format).
-                val playedFrames = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                val bufferedFrames = totalFramesWritten - playedFrames
-                val bufferedMs = (bufferedFrames * 1000) / SAMPLE_RATE
+        if (!playbackRunning) return
+        synchronized(playbackLock) {
+            playbackQueue.addLast(data)
+            queuedBytes += data.size
+            // If we have fallen behind (slow consumer, clock drift, scheduling/GC
+            // hiccups), drop the OLDEST audio so that what the user hears stays
+            // close to real time instead of accumulating an ever-growing delay.
+            var dropped = 0
+            while (queuedBytes > maxBufferedBytes && playbackQueue.size > 1) {
+                val removed = playbackQueue.removeFirst()
+                queuedBytes -= removed.size
+                dropped += removed.size
+            }
+            if (dropped > 0) {
+                Log.w(TAG, "Playback backlog exceeded ${maxBufferedBytes / 32}ms; dropped ${dropped / 32}ms of stale audio.")
+            }
+            playbackLock.notifyAll()
+        }
+    }
 
-                if (bufferedMs > 350) {
-                    Log.w(TAG, "Audio lag detected: ${bufferedMs}ms (>350ms buffer backlog). Flushing AudioTrack.")
-                    track.flush()
-                    totalFramesWritten = 0L
+    private fun startPlaybackThread() {
+        playbackRunning = true
+        val thread = Thread({ playbackLoop() }, "AudioPlayback").apply {
+            priority = Thread.MAX_PRIORITY
+        }
+        playbackThread = thread
+        thread.start()
+    }
+
+    // Dedicated consumer thread. The blocking AudioTrack.write() here provides the
+    // playback pacing; while it is busy, the producer keeps the jitter buffer
+    // bounded by dropping old chunks (see playAudio).
+    private fun playbackLoop() {
+        while (playbackRunning) {
+            val chunk: ByteArray? = synchronized(playbackLock) {
+                while (playbackRunning && playbackQueue.isEmpty()) {
+                    try {
+                        playbackLock.wait()
+                    } catch (e: InterruptedException) {
+                        return@synchronized null
+                    }
                 }
-
-                val currentPlayBoost = playbackBoostFactor
-                val isLimiter = isLimiterEnabled
-                val limitT = limiterThreshold
-
-                if (currentPlayBoost != 1.0f || isLimiter) {
-                    val len = data.size
-                    val result = ByteArray(len)
-                    for (i in 0 until len step 2) {
-                        if (i + 1 < len) {
-                            // Extract 16-bit linear PCM sample
-                            val sample = ((data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)).toShort()
-                            
-                            // 1. Gain boost
-                            var fSample = sample.toFloat() * currentPlayBoost
-                            
-                            // 2. Soft limiter
-                            if (isLimiter) {
-                                val sampleNorm = fSample / 32768f
-                                val absVolume = abs(sampleNorm)
-                                if (absVolume > limitT) {
-                                    val excess = absVolume - limitT
-                                    val compressedExcess = (1f - limitT) * (excess / ((1f - limitT) + excess))
-                                    val sign = if (sampleNorm < 0f) -1f else 1f
-                                    val limitedNorm = sign * (limitT + compressedExcess)
-                                    fSample = limitedNorm * 32768f
-                                }
-                            }
-                            
-                            val finalSample = fSample.coerceIn(-32768f, 32767f).toInt()
-                            result[i] = (finalSample and 0xFF).toByte()
-                            result[i + 1] = ((finalSample shr 8) and 0xFF).toByte()
-                        }
-                    }
-                    val bytesWritten = track.write(result, 0, result.size)
-                    if (bytesWritten > 0) {
-                        totalFramesWritten += bytesWritten / 2
-                    }
+                if (!playbackRunning || playbackQueue.isEmpty()) {
+                    null
                 } else {
-                    val bytesWritten = track.write(data, 0, data.size)
-                    if (bytesWritten > 0) {
-                        totalFramesWritten += bytesWritten / 2
-                    }
+                    val c = playbackQueue.removeFirst()
+                    queuedBytes -= c.size
+                    c
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error writing to AudioTrack", e)
+            }
+
+            if (chunk != null) {
+                writeChunk(chunk)
             }
         }
     }
 
+    private fun writeChunk(data: ByteArray) {
+        val track = audioTrack ?: return
+        if (track.playState != AudioTrack.PLAYSTATE_PLAYING) return
+        try {
+            val currentPlayBoost = playbackBoostFactor
+            val isLimiter = isLimiterEnabled
+            val limitT = limiterThreshold
+
+            if (currentPlayBoost != 1.0f || isLimiter) {
+                val len = data.size
+                val result = ByteArray(len)
+                for (i in 0 until len step 2) {
+                    if (i + 1 < len) {
+                        // Extract 16-bit linear PCM sample
+                        val sample = ((data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)).toShort()
+
+                        // 1. Gain boost
+                        var fSample = sample.toFloat() * currentPlayBoost
+
+                        // 2. Soft limiter
+                        if (isLimiter) {
+                            val sampleNorm = fSample / 32768f
+                            val absVolume = abs(sampleNorm)
+                            if (absVolume > limitT) {
+                                val excess = absVolume - limitT
+                                val compressedExcess = (1f - limitT) * (excess / ((1f - limitT) + excess))
+                                val sign = if (sampleNorm < 0f) -1f else 1f
+                                val limitedNorm = sign * (limitT + compressedExcess)
+                                fSample = limitedNorm * 32768f
+                            }
+                        }
+
+                        val finalSample = fSample.coerceIn(-32768f, 32767f).toInt()
+                        result[i] = (finalSample and 0xFF).toByte()
+                        result[i + 1] = ((finalSample shr 8) and 0xFF).toByte()
+                    }
+                }
+                track.write(result, 0, result.size)
+            } else {
+                track.write(data, 0, data.size)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error writing to AudioTrack", e)
+        }
+    }
+
     fun stopPlayback() {
+        playbackRunning = false
+        val thread = playbackThread
+        playbackThread = null
+        synchronized(playbackLock) {
+            playbackQueue.clear()
+            queuedBytes = 0
+            playbackLock.notifyAll()
+        }
+        thread?.let {
+            it.interrupt()
+            try {
+                it.join(500)
+            } catch (e: InterruptedException) {
+                // ignore
+            }
+        }
         try {
             audioTrack?.stop()
             audioTrack?.release()
