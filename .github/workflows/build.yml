@@ -68,28 +68,31 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
 
-      - name: Generate debug keystore
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          # The app's debugConfig signing config expects a keystore at the project root.
-          # It is git-ignored, so we create a deterministic one for CI.
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android -keypass android \
-            -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set. Add the release signing secrets to build a signed release."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/my-upload-key.jks"
 
-      - name: Build debug APK
+      - name: Build release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Stage APK
         id: stage
         run: |
           mkdir -p dist
-          APK="voxlnk-v1.0.${{ github.run_number }}-debug.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "dist/$APK"
+          APK="voxlnk-v1.0.${{ github.run_number }}-release.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/$APK"
           echo "apk_path=dist/$APK" >> "$GITHUB_OUTPUT"
           echo "apk_name=$APK" >> "$GITHUB_OUTPUT"
 
@@ -107,9 +110,9 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: VoxLnk v1.0.${{ github.run_number }}
           body: |
-            Automated debug build from `${{ github.sha }}`.
+            Automated signed release build from `${{ github.sha }}`.
 
-            Install on a device with USB debugging / unknown sources enabled:
+            Install on a device with unknown sources enabled:
             `adb install ${{ steps.stage.outputs.apk_name }}`
           files: ${{ steps.stage.outputs.apk_path }}
           fail_on_unmatched_files: true
