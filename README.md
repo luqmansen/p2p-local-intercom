@@ -30,74 +30,35 @@ DSP-processed (HPF, mic/playback boost, soft limiter, VOX gating), streamed as r
 
 Versions are defined in `gradle/libs.versions.toml` and `app/build.gradle.kts`.
 
-## Build & validate (containerized with Podman)
+## Build & validate (containerized)
 
-The host has neither Java nor the Android SDK. Everything below runs in a throwaway
-container image; the only persistent state is a named Gradle cache volume (`voxgradle`)
-and the normal `app/build/` output inside the repo.
+The host has neither Java nor the Android SDK. Builds run in a throwaway container
+(`docker/Containerfile`, JDK 17 + Android SDK 36.1); the only persistent state is a named
+Gradle cache volume (`voxgradle`) and the normal `app/build/` output inside the repo.
 
-### 1. One-time: build the image
-
-Create `Containerfile` (kept outside the repo, e.g. `/tmp/voxbuild/Containerfile`):
-
-```dockerfile
-FROM docker.io/library/eclipse-temurin:17-jdk
-
-ENV ANDROID_SDK_ROOT=/opt/android-sdk
-ENV ANDROID_HOME=/opt/android-sdk
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl unzip ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
-    curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdline.zip && \
-    unzip -q /tmp/cmdline.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools && \
-    mv ${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools ${ANDROID_SDK_ROOT}/cmdline-tools/latest && \
-    rm /tmp/cmdline.zip
-
-ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools
-
-RUN yes | sdkmanager --licenses >/dev/null 2>&1 || true
-RUN sdkmanager --install "platform-tools" "platforms;android-36.1" "build-tools;36.1.0" >/dev/null && \
-    yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-WORKDIR /work
-```
-
-Build it:
+A wrapper script — `docker/build.sh` — builds the image (cached after the first run) and
+runs any Gradle task inside it. Defaults to Podman; set `CONTAINER_ENGINE=docker` to use
+Docker instead.
 
 ```bash
-podman build -t voxbuild /tmp/voxbuild
+# Fast feedback loop: compile Kotlin (validates code changes)
+./docker/build.sh :app:compileDebugKotlin    # this is also the default task
+
+# Full build: debug APK
+./docker/build.sh :app:assembleDebug
+
+# Unit tests
+./docker/build.sh :app:testDebugUnitTest
 ```
 
-### 2. Compile Kotlin (fast feedback loop)
+Notes:
 
-```bash
-podman run --rm \
-  -v "$(pwd)":/work:z \
-  -v voxgradle:/gradle-home \
-  -e GRADLE_USER_HOME=/gradle-home \
-  -w /work \
-  voxbuild ./gradlew :app:compileDebugKotlin --console=plain --no-daemon
-```
-
-- `:z` relabels the mount for SELinux; drop it if your host doesn't use SELinux.
-- `GRADLE_USER_HOME=/gradle-home` keeps Gradle's downloads in the named volume, **not**
-  in the repo or the host home dir.
-- First run downloads Gradle deps (slow); subsequent runs reuse the `voxgradle` volume.
-
-### 3. Build a debug APK (full validation)
-
-```bash
-podman run --rm \
-  -v "$(pwd)":/work:z \
-  -v voxgradle:/gradle-home \
-  -e GRADLE_USER_HOME=/gradle-home \
-  -w /work \
-  voxbuild ./gradlew :app:assembleDebug --console=plain --no-daemon
-```
+- First run downloads the Gradle distribution + deps (slow); later runs reuse the
+  `voxgradle` volume, so nothing accumulates in the repo or the host home dir.
+- The script passes `--console=plain --no-daemon` and mounts the repo at `/work` with
+  `GRADLE_USER_HOME=/gradle-home`.
+- On non-SELinux hosts the `:z` mount flag is harmless; the script drops it automatically
+  when `CONTAINER_ENGINE=docker`.
 
 > **Gotcha:** `assembleDebug` signs with the `debugConfig` keystore at
 > `./debug.keystore` (password `android`, alias `androiddebugkey`). If that file is
@@ -105,12 +66,13 @@ podman run --rm \
 > committed `debug.keystore.base64` was removed from the repo, so regenerate/restore the
 > keystore if you need to produce an APK.
 
-### 4. Run unit tests
+If you prefer to run the container by hand instead of the script, the equivalent is:
 
 ```bash
+podman build -t voxbuild docker
 podman run --rm -v "$(pwd)":/work:z -v voxgradle:/gradle-home \
   -e GRADLE_USER_HOME=/gradle-home -w /work \
-  voxbuild ./gradlew :app:testDebugUnitTest --console=plain --no-daemon
+  voxbuild ./gradlew :app:compileDebugKotlin --console=plain --no-daemon
 ```
 
 ## Architecture

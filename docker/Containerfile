@@ -1,0 +1,30 @@
+FROM docker.io/library/eclipse-temurin:17-jdk
+
+# Android build environment for VoxLnk.
+# Pinned to the toolchain this project requires:
+#   - JDK 17 (needed to run AGP 9.x / Gradle 9.4)
+#   - Android SDK platform 36.1 + build-tools 36.1.0 (compileSdk/targetSdk = 36.1)
+
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV ANDROID_HOME=/opt/android-sdk
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl unzip ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Android command-line tools.
+RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
+    curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdline.zip && \
+    unzip -q /tmp/cmdline.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools && \
+    mv ${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools ${ANDROID_SDK_ROOT}/cmdline-tools/latest && \
+    rm /tmp/cmdline.zip
+
+ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools
+
+# Accept licenses and install the SDK packages this project compiles against.
+RUN yes | sdkmanager --licenses >/dev/null 2>&1 || true
+RUN sdkmanager --install "platform-tools" "platforms;android-36.1" "build-tools;36.1.0" >/dev/null && \
+    yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+WORKDIR /work
