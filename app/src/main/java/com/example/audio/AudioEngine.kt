@@ -76,6 +76,7 @@ class AudioEngine(private val context: android.content.Context) {
     // Audio Capture and Render
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
+    @Volatile private var totalFramesWritten: Long = 0L
 
     // Audio FX
     private var noiseSuppressor: NoiseSuppressor? = null
@@ -307,6 +308,7 @@ class AudioEngine(private val context: android.content.Context) {
             )
 
             if (audioTrack?.state == AudioTrack.STATE_INITIALIZED) {
+                totalFramesWritten = 0L
                 audioTrack?.play()
                 Log.d(TAG, "Playback started successfully")
             } else {
@@ -321,6 +323,18 @@ class AudioEngine(private val context: android.content.Context) {
         val track = audioTrack
         if (track != null && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
             try {
+                // Eliminate potential audio lagging by checking the current buffered frame level.
+                // 1 frame = 2 bytes (1 sample in 16-bit mono format).
+                val playedFrames = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                val bufferedFrames = totalFramesWritten - playedFrames
+                val bufferedMs = (bufferedFrames * 1000) / SAMPLE_RATE
+
+                if (bufferedMs > 350) {
+                    Log.w(TAG, "Audio lag detected: ${bufferedMs}ms (>350ms buffer backlog). Flushing AudioTrack.")
+                    track.flush()
+                    totalFramesWritten = 0L
+                }
+
                 val currentPlayBoost = playbackBoostFactor
                 val isLimiter = isLimiterEnabled
                 val limitT = limiterThreshold
@@ -354,9 +368,15 @@ class AudioEngine(private val context: android.content.Context) {
                             result[i + 1] = ((finalSample shr 8) and 0xFF).toByte()
                         }
                     }
-                    track.write(result, 0, result.size)
+                    val bytesWritten = track.write(result, 0, result.size)
+                    if (bytesWritten > 0) {
+                        totalFramesWritten += bytesWritten / 2
+                    }
                 } else {
-                    track.write(data, 0, data.size)
+                    val bytesWritten = track.write(data, 0, data.size)
+                    if (bytesWritten > 0) {
+                        totalFramesWritten += bytesWritten / 2
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing to AudioTrack", e)

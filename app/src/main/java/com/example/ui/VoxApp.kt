@@ -720,15 +720,25 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
                 ) {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            val dotColor = when {
+                                mode == AppMode.SERVER -> TacticalGreen
+                                isConnectedState -> TacticalGreen
+                                else -> TacticalAmber
+                            }
                             Box(
                                 modifier = Modifier
                                     .size(8.dp)
-                                    .background(TacticalGreen, CircleShape)
+                                    .background(dotColor, CircleShape)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
+                            val stateHeader = when {
+                                mode == AppMode.SERVER -> "TRANSCEIVER STATE: HOST"
+                                isConnectedState -> "TRANSCEIVER STATE: CLIENT"
+                                else -> "TRANSCEIVER STATE: CLIENT (RECONNECTING...)"
+                            }
                             Text(
-                                text = if (mode == AppMode.SERVER) "TRANSCEIVER STATE: HOST" else "TRANSCEIVER STATE: CLIENT",
-                                color = CombatWhite,
+                                text = stateHeader,
+                                color = if (mode == AppMode.CLIENT && !isConnectedState) TacticalAmber else CombatWhite,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.SansSerif,
@@ -736,8 +746,13 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
                             )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
+                        val addressSubtitle = when {
+                            mode == AppMode.SERVER -> "Host IP: $localIp:$targetPort"
+                            isConnectedState -> "Connected: $targetIp:$targetPort"
+                            else -> "Target Host: $targetIp:$targetPort"
+                        }
                         Text(
-                            text = if (mode == AppMode.SERVER) "Host IP: $localIp:$targetPort" else "Connected: $targetIp:$targetPort",
+                            text = addressSubtitle,
                             color = TacticalMuted,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.SansSerif

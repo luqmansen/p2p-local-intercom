@@ -114,6 +114,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     // Network instances
     private var voxServer: VoxServer? = null
     private var voxClient: VoxClient? = null
+    private var clientConnectionJob: Job? = null
 
     private var broadcastJob: Job? = null
     private var discoveryJob: Job? = null
@@ -557,61 +558,95 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         stopDiscoveryScan() // Disable any pending scans immediately
         appMode.value = AppMode.CLIENT
         discoveredServers.value = emptyList()
-        addLog("Connecting to server...")
+        addLog("Client mode activated.")
 
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val serverIp = targetServerIp.value
-                val port = serverLaunchPort.value
-                val uri = URI("ws://$serverIp:$port")
+        clientConnectionJob?.cancel()
+        clientConnectionJob = viewModelScope.launch(Dispatchers.IO) {
+            while (appMode.value == AppMode.CLIENT) {
+                if (!isConnected.value) {
+                    val serverIp = targetServerIp.value
+                    val port = serverLaunchPort.value
+                    addLog("Connecting to server at $serverIp:$port...")
+                    
+                    try {
+                        val uri = URI("ws://$serverIp:$port")
 
-                val client = VoxClient(
-                    serverUri = uri,
-                    nickname = nickname.value,
-                    onConnected = { assignedId ->
-                        isConnected.value = true
-                        addLog("Connected. ID: $assignedId")
+                        // Clean up old audio engine state before trying again
+                        audioEngine.stopRecording()
+                        audioEngine.stopPlayback()
 
-                        // Launch Foreground Service to ensure screen off / background continuation
-                        val serviceIntent = Intent(context, VoxService::class.java).apply {
-                            action = VoxService.ACTION_START
-                            putExtra(VoxService.EXTRA_STATUS, "Connected to: $serverIp")
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            context.startForegroundService(serviceIntent)
+                        try { voxClient?.close() } catch (e: Exception) {}
+                        voxClient = null
+
+                        var isClientConnectionActive = true
+
+                        val client = VoxClient(
+                            serverUri = uri,
+                            nickname = nickname.value,
+                            onConnected = { assignedId ->
+                                isConnected.value = true
+                                addLog("Connected to server. ID: $assignedId")
+
+                                // Launch Foreground Service to ensure screen off / background continuation
+                                val serviceIntent = Intent(context, VoxService::class.java).apply {
+                                    action = VoxService.ACTION_START
+                                    putExtra(VoxService.EXTRA_STATUS, "Connected to: $serverIp")
+                                }
+                                try {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(serviceIntent)
+                                    } else {
+                                        context.startService(serviceIntent)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to start service", e)
+                                }
+                                
+                                // Start recording and playback
+                                audioEngine.startPlayback()
+                                audioEngine.startRecording { bytes ->
+                                    voxClient?.sendVoice(bytes)
+                                }
+                            },
+                            onDisconnected = {
+                                if (isClientConnectionActive) {
+                                    isClientConnectionActive = false
+                                    isConnected.value = false
+                                    addLog("Connection lost. Retrying in background...")
+                                    audioEngine.stopRecording()
+                                    audioEngine.stopPlayback()
+                                }
+                            },
+                            onPeerListChanged = { newList ->
+                                rawPeerList.value = newList
+                            },
+                            onAudioReceived = { id, nick, data ->
+                                // Record other client's speaking activity
+                                peerActiveSpeakerTimestamps[id] = System.currentTimeMillis()
+                                audioEngine.playAudio(data)
+                            },
+                            onStatusMessage = { msg ->
+                                addLog("[Client] $msg")
+                            }
+                        )
+
+                        voxClient = client
+                        val connected = client.connectBlocking()
+                        if (connected) {
+                            while (appMode.value == AppMode.CLIENT && isConnected.value && client.isOpen) {
+                                delay(1000)
+                            }
                         } else {
-                            context.startService(serviceIntent)
+                            isConnected.value = false
+                            addLog("Connection attempt failed. Retrying in 3 seconds...")
                         }
-                        
-                        // Start recording and playback
-                        audioEngine.startPlayback()
-                        audioEngine.startRecording { bytes ->
-                            voxClient?.sendVoice(bytes)
-                        }
-                    },
-                    onDisconnected = {
-                        addLog("Disconnected from walkie-talkie list")
-                        stopAll()
-                    },
-                    onPeerListChanged = { newList ->
-                        rawPeerList.value = newList
-                    },
-                    onAudioReceived = { id, nick, data ->
-                        // Record other client's speaking activity
-                        peerActiveSpeakerTimestamps[id] = System.currentTimeMillis()
-                        audioEngine.playAudio(data)
-                    },
-                    onStatusMessage = { msg ->
-                        addLog("[Client] $msg")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed initiating client connection", e)
+                        isConnected.value = false
+                        addLog("Connection failed: ${e.message}. Retrying in 3 seconds...")
                     }
-                )
-
-                voxClient = client
-                client.connect()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed initiating client connection", e)
-                addLog("Connection failed: ${e.message}")
-                stopAll()
+                }
+                delay(3000)
             }
         }
     }
@@ -619,6 +654,10 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     fun stopAll() {
         viewModelScope.launch(Dispatchers.IO) {
             addLog("Shutting down audio engine and network sockets...")
+
+            // Cancel any client reconnection job
+            clientConnectionJob?.cancel()
+            clientConnectionJob = null
 
             // Stop Foreground Service
             try {
