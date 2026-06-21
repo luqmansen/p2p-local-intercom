@@ -104,6 +104,8 @@ Key files:
 - `app/src/main/java/com/example/ui/VoxViewModel.kt` — wires UI ↔ audio ↔ network, server
   discovery, and client auto-reconnect.
 - `AUDIO_DSP_MATH.md` — derivations for the DSP (HPF coefficient, soft limiter, etc.).
+- `AUDIO_LATENCY.md` — deep explanation of why audio delay grows over time (TCP flow
+  control, clock drift, blocking writes) and how the jitter buffer fix works.
 
 ## Important gotchas (read before touching audio/networking)
 
