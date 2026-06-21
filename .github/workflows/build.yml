@@ -3,6 +3,16 @@ name: Build APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
+      - ".github/FUNDING.yml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/PULL_REQUEST_TEMPLATE/**"
+      - "docs/**"
+      - "assets/**"
+      - "screenshots/**"
+      - "LICENSE"
   workflow_dispatch:
 
 permissions:
