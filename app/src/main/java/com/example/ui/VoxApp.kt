@@ -59,7 +59,7 @@ val LightTacticalColors = TacticalColorLayout(
     SlateSurfaceVariant = Color(0xFFF1F0F4),  // Light gray containers / nav backgrounds
     TacticalGreen = Color(0xFF0061A4),        // Rich primary M3 brand blue
     TacticalAmber = Color(0xFF0061A4),        // Standard active blue for high density
-    TacticalMuted = Color(0xFF74777F) ,       // Classy slate-gray muted text
+    TacticalMuted = Color(0xFF74777F),       // Classy slate-gray muted text
     TacticalCrimson = Color(0xFFBA1A1A),      // Red warning / actions from design
     TacticalBorder = Color(0xFFC4C6CF),       // Light outlined borders from design
     CombatWhite = Color(0xFF1A1C1E)           // Deep charcoal text for readability
@@ -99,7 +99,7 @@ fun VoxApp(viewModel: VoxViewModel) {
         AppThemeChoice.LIGHT -> false
         AppThemeChoice.DARK -> true
     }
-    
+
     currentTacticalColorsState = if (isDark) DarkTacticalColors else LightTacticalColors
 
     val permissions = remember {
@@ -117,7 +117,8 @@ fun VoxApp(viewModel: VoxViewModel) {
         modifier = Modifier.fillMaxSize(),
         color = SlateBackground
     ) {
-        val micGranted = permissionsState.permissions.find { it.permission == Manifest.permission.RECORD_AUDIO }?.status?.isGranted == true
+        val micGranted =
+            permissionsState.permissions.find { it.permission == Manifest.permission.RECORD_AUDIO }?.status?.isGranted == true
         val allGranted = permissionsState.allPermissionsGranted
 
         LaunchedEffect(micGranted, allGranted) {
@@ -330,7 +331,13 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                     OutlinedTextField(
                         value = nick,
                         onValueChange = { viewModel.nickname.value = it },
-                        label = { Text("Call Sign (Nickname)", color = TacticalMuted, fontFamily = FontFamily.SansSerif) },
+                        label = {
+                            Text(
+                                "Call Sign (Nickname)",
+                                color = TacticalMuted,
+                                fontFamily = FontFamily.SansSerif
+                            )
+                        },
                         textStyle = LocalTextStyle.current.copy(color = CombatWhite, fontFamily = FontFamily.SansSerif),
                         singleLine = true,
                         shape = RoundedCornerShape(16.dp),
@@ -410,8 +417,19 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("HOST SERVER Mode", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
-                                Text("Be the network hub", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp, fontFamily = FontFamily.SansSerif)
+                                Text(
+                                    "HOST SERVER Mode",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.SansSerif
+                                )
+                                Text(
+                                    "Be the network hub",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.SansSerif
+                                )
                             }
                         }
 
@@ -430,8 +448,19 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("JOIN CLIENT Mode", color = TacticalGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif)
-                                Text("Connect to Host", color = TacticalMuted, fontSize = 10.sp, fontFamily = FontFamily.SansSerif)
+                                Text(
+                                    "JOIN CLIENT Mode",
+                                    color = TacticalGreen,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.SansSerif
+                                )
+                                Text(
+                                    "Connect to Host",
+                                    color = TacticalMuted,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.SansSerif
+                                )
                             }
                         }
                     }
@@ -454,12 +483,22 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
-                              ) {
+                            ) {
                                 OutlinedTextField(
                                     value = targetIp,
                                     onValueChange = { viewModel.targetServerIp.value = it },
-                                    label = { Text("Server IP Address", fontFamily = FontFamily.SansSerif, fontSize = 11.sp) },
-                                    textStyle = LocalTextStyle.current.copy(color = CombatWhite, fontFamily = FontFamily.SansSerif, fontSize = 13.sp),
+                                    label = {
+                                        Text(
+                                            "Server IP Address",
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp
+                                        )
+                                    },
+                                    textStyle = LocalTextStyle.current.copy(
+                                        color = CombatWhite,
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 13.sp
+                                    ),
                                     singleLine = true,
                                     shape = RoundedCornerShape(16.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -477,7 +516,11 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
                                         value.toIntOrNull()?.let { viewModel.serverLaunchPort.value = it }
                                     },
                                     label = { Text("Port", fontFamily = FontFamily.SansSerif, fontSize = 11.sp) },
-                                    textStyle = LocalTextStyle.current.copy(color = CombatWhite, fontFamily = FontFamily.SansSerif, fontSize = 13.sp),
+                                    textStyle = LocalTextStyle.current.copy(
+                                        color = CombatWhite,
+                                        fontFamily = FontFamily.SansSerif,
+                                        fontSize = 13.sp
+                                    ),
                                     singleLine = true,
                                     shape = RoundedCornerShape(16.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -494,7 +537,7 @@ fun VoxIdleSetupScreen(viewModel: VoxViewModel) {
 
                     // --- Auto Discovered Servers Section ---
                     Spacer(modifier = Modifier.height(24.dp))
-                    
+
                     Button(
                         onClick = { viewModel.toggleDiscoveryScan() },
                         colors = ButtonDefaults.buttonColors(
@@ -1104,9 +1147,19 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Group, contentDescription = null, tint = TacticalMuted, modifier = Modifier.size(32.dp))
+                            Icon(
+                                Icons.Default.Group,
+                                contentDescription = null,
+                                tint = TacticalMuted,
+                                modifier = Modifier.size(32.dp)
+                            )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("No peers detected yet", color = TacticalMuted, fontSize = 12.sp, fontFamily = FontFamily.SansSerif)
+                            Text(
+                                "No peers detected yet",
+                                color = TacticalMuted,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.SansSerif
+                            )
                         }
                     }
                 }
@@ -1154,7 +1207,10 @@ fun VoxActiveSessionScreen(viewModel: VoxViewModel) {
                                         heightAnimation.animateTo(
                                             targetValue = 14f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(durationMillis = 300 + (index * 100), easing = LinearEasing),
+                                                animation = tween(
+                                                    durationMillis = 300 + (index * 100),
+                                                    easing = LinearEasing
+                                                ),
                                                 repeatMode = RepeatMode.Reverse
                                             )
                                         )
@@ -1830,41 +1886,61 @@ fun VoxSettingsSection(viewModel: VoxViewModel) {
             )
         }
 
-        // HPF Cutoff Frequency Slider
+        // HPF Strength preset selector.
+        // Continuous Hz tuning is more granularity than anyone can hear, so we expose
+        // three meaningful points instead. Higher cutoff = more wind/rumble removed at
+        // the cost of voice "body". The chosen value still feeds AudioEngine.hpfCutoff.
         if (hpfEnabled) {
+            val hpfPresets = listOf(
+                Triple("FULL", 110f, "Fuller voice, calm/indoor"),
+                Triple("CLEAR", 150f, "Balanced (default)"),
+                Triple("WINDY", 220f, "Max wind/rumble rejection")
+            )
+            // Highlight the preset closest to the stored cutoff (handles legacy values).
+            val selectedPreset = hpfPresets.minByOrNull { kotlin.math.abs(it.second - hpfCutoff) }
             Column {
+                Text(
+                    text = "HPF STRENGTH",
+                    color = CombatWhite,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "HPF CUTOFF FREQUENCY",
-                        color = CombatWhite,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.SansSerif
-                    )
-                    Text(
-                        text = "${hpfCutoff.toInt()} Hz",
-                        color = TacticalGreen,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.SansSerif
-                    )
+                    hpfPresets.forEach { preset ->
+                        val isSelected = preset == selectedPreset
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) TacticalGreen else SlateSurfaceVariant)
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) TacticalGreen else TacticalBorder,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable { viewModel.setHpfCutoff(preset.second) }
+                                .testTag("hpf_preset_${preset.first.lowercase()}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = preset.first,
+                                color = if (isSelected) Color.White else TacticalMuted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.SansSerif
+                            )
+                        }
+                    }
                 }
-                Slider(
-                    value = hpfCutoff,
-                    onValueChange = { viewModel.setHpfCutoff(it) },
-                    valueRange = 60f..300f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = TacticalGreen,
-                        activeTrackColor = TacticalGreen,
-                        inactiveTrackColor = TacticalBorder
-                    )
-                )
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Frequencies below this cutoff value are attenuated at 6 dB/octave.",
+                    text = selectedPreset?.let { "${it.third}  •  ${it.second.toInt()} Hz, 12 dB/octave" } ?: "",
                     color = TacticalMuted,
                     fontSize = 9.sp,
                     fontFamily = FontFamily.SansSerif

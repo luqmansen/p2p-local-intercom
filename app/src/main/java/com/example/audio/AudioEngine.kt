@@ -38,30 +38,90 @@ class AudioEngine(private val context: android.content.Context) {
     }
 
     // Settings (volatile for thread safety)
-    @Volatile var isVoxEnabled: Boolean = true
-    @Volatile var voxThreshold: Float = 0.05f       // 5% peak amplitude
-    @Volatile var voxHangoverMs: Long = 800L        // Keep transmitting for 800ms after quiet
-    @Volatile var isNoiseSuppressorEnabled: Boolean = true
-    @Volatile var isEchoCancelerEnabled: Boolean = true
-    @Volatile var isAgcEnabled: Boolean = true
-    @Volatile var micBoostFactor: Float = 2.5f       // Microphone/recording boost factor (1.0x - 5.0x)
-    @Volatile var playbackBoostFactor: Float = 2.5f  // Playback/speaker boost factor (1.0x - 5.0x)
-    @Volatile var isHpfEnabled: Boolean = true
-    @Volatile var hpfCutoff: Float = 120f             // Default HPF cutoff (Hz)
-    @Volatile var isLimiterEnabled: Boolean = true
-    @Volatile var limiterThreshold: Float = 0.8f      // Default Soft Limiter threshold (80% full scale)
-    @Volatile var isAcousticCuesEnabled: Boolean = true
+    @Volatile
+    var isVoxEnabled: Boolean = true
+
+    @Volatile
+    var voxThreshold: Float = 0.05f       // 5% peak amplitude
+
+    @Volatile
+    var voxHangoverMs: Long = 800L        // Keep transmitting for 800ms after quiet
+
+    @Volatile
+    var isNoiseSuppressorEnabled: Boolean = true
+
+    @Volatile
+    var isEchoCancelerEnabled: Boolean = true
+
+    @Volatile
+    var isAgcEnabled: Boolean = true
+
+    @Volatile
+    var micBoostFactor: Float = 2.5f       // Microphone/recording boost factor (1.0x - 5.0x)
+
+    @Volatile
+    var playbackBoostFactor: Float = 2.5f  // Playback/speaker boost factor (1.0x - 5.0x)
+
+    @Volatile
+    var isHpfEnabled: Boolean = true
+
+    @Volatile
+    var hpfCutoff: Float = 150f             // Default HPF cutoff (Hz) - higher helps reject wind
+
+    @Volatile
+    var isLimiterEnabled: Boolean = true
+
+    @Volatile
+    var limiterThreshold: Float = 0.8f      // Default Soft Limiter threshold (80% full scale)
+
+    @Volatile
+    var isAcousticCuesEnabled: Boolean = true
 
     private var toneGen: ToneGenerator? = null
-    @Volatile var tonePlayingUntilMillis: Long = 0L
 
-    // State for HPF to maintain continuity across audio buffers
-    private var lastHpfInput: Float = 0f
-    private var lastHpfOutput: Float = 0f
+    @Volatile
+    var tonePlayingUntilMillis: Long = 0L
 
-    // Read-only coefficient for HPF
-    private val hpfAlpha: Float
-        get() = (1f / (1f + (2f * Math.PI.toFloat() * hpfCutoff / SAMPLE_RATE)))
+    // --- Software high-pass filter (2nd-order Butterworth biquad) ---
+    // A single-pole HPF (6 dB/oct) barely touches wind noise, whose energy is
+    // broadband and extends well above the cutoff. A 2nd-order section (12 dB/oct)
+    // rejects low-frequency wind rumble far more aggressively while leaving the
+    // speech band (~300-3400 Hz) essentially untouched.
+    // Direct Form I state (per recording session, carried across buffers):
+    private var hpfX1 = 0f
+    private var hpfX2 = 0f
+    private var hpfY1 = 0f
+    private var hpfY2 = 0f
+
+    // Cached biquad coefficients (normalized by a0) + the cutoff they were computed for.
+    private var hpfB0 = 1f
+    private var hpfB1 = 0f
+    private var hpfB2 = 0f
+    private var hpfA1 = 0f
+    private var hpfA2 = 0f
+    private var hpfCoeffCutoff = -1f
+
+    // RBJ cookbook high-pass coefficients. Recomputed only when the cutoff changes
+    // (trig runs at most once per buffer, i.e. ~16x/sec - negligible cost).
+    private fun updateHpfCoefficients(cutoff: Float) {
+        if (cutoff == hpfCoeffCutoff) return
+        val w0 = 2.0 * Math.PI * cutoff / SAMPLE_RATE
+        val cosw0 = Math.cos(w0)
+        val sinw0 = Math.sin(w0)
+        val q = 0.7071068 // Butterworth response (maximally flat passband)
+        val alpha = sinw0 / (2.0 * q)
+        val a0 = 1.0 + alpha
+        hpfB0 = (((1.0 + cosw0) / 2.0) / a0).toFloat()
+        hpfB1 = ((-(1.0 + cosw0)) / a0).toFloat()
+        hpfB2 = (((1.0 + cosw0) / 2.0) / a0).toFloat()
+        hpfA1 = ((-2.0 * cosw0) / a0).toFloat()
+        hpfA2 = ((1.0 - alpha) / a0).toFloat()
+        hpfCoeffCutoff = cutoff
+    }
+
+    private fun resetHpfState() {
+        hpfX1 = 0f; hpfX2 = 0f; hpfY1 = 0f; hpfY2 = 0f
+    }
 
     // State flows for UI observing
     private val _realtimeAmplitude = MutableStateFlow(0f)
@@ -86,11 +146,14 @@ class AudioEngine(private val context: android.content.Context) {
     private val playbackQueue = ArrayDeque<ByteArray>()
     private val playbackLock = Object()
     private var queuedBytes = 0
+
     // Maximum audio allowed to sit in the jitter buffer before we start dropping the
     // oldest chunks. 2 bytes per frame (16-bit mono). ~200ms of headroom.
     private val maxBufferedBytes = SAMPLE_RATE * 2 * 200 / 1000
     private var playbackThread: Thread? = null
-    @Volatile private var playbackRunning = false
+
+    @Volatile
+    private var playbackRunning = false
 
     // Audio FX
     private var noiseSuppressor: NoiseSuppressor? = null
@@ -143,8 +206,7 @@ class AudioEngine(private val context: android.content.Context) {
             val shortBuffer = ShortArray(1024) // 1024 shorts is 64ms at 16000Hz
             val byteBuffer = ByteArray(2048)
             lastVoiceDetectedTime = 0L
-            lastHpfInput = 0f
-            lastHpfOutput = 0f
+            resetHpfState()
 
             while (audioRecord != null && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 val readResult = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
@@ -154,15 +216,27 @@ class AudioEngine(private val context: android.content.Context) {
                         for (i in 0 until readResult) {
                             shortBuffer[i] = 0
                         }
+                        // Clear filter memory so the muted gap doesn't leave a
+                        // decaying tail / click when audio resumes.
+                        resetHpfState()
                     }
-                    // 1. High Pass Filter (HPF) to remove low-frequency rumble & engine hums
+                    // 1. High Pass Filter (HPF) to remove low-frequency wind rumble & engine hums.
+                    //    2nd-order Butterworth (12 dB/oct) - far more effective against wind than a
+                    //    single-pole filter, while preserving the speech band.
                     if (isHpfEnabled) {
-                        val alpha = hpfAlpha
+                        updateHpfCoefficients(hpfCutoff)
+                        val b0 = hpfB0
+                        val b1 = hpfB1
+                        val b2 = hpfB2
+                        val a1 = hpfA1
+                        val a2 = hpfA2
                         for (i in 0 until readResult) {
                             val x = shortBuffer[i].toFloat()
-                            val y = alpha * (lastHpfOutput + x - lastHpfInput)
-                            lastHpfInput = x
-                            lastHpfOutput = y
+                            val y = b0 * x + b1 * hpfX1 + b2 * hpfX2 - a1 * hpfY1 - a2 * hpfY2
+                            hpfX2 = hpfX1
+                            hpfX1 = x
+                            hpfY2 = hpfY1
+                            hpfY1 = y
                             shortBuffer[i] = y.coerceIn(-32768f, 32767f).toInt().toShort()
                         }
                     }
@@ -350,7 +424,10 @@ class AudioEngine(private val context: android.content.Context) {
                 dropped += removed.size
             }
             if (dropped > 0) {
-                Log.w(TAG, "Playback backlog exceeded ${maxBufferedBytes / 32}ms; dropped ${dropped / 32}ms of stale audio.")
+                Log.w(
+                    TAG,
+                    "Playback backlog exceeded ${maxBufferedBytes / 32}ms; dropped ${dropped / 32}ms of stale audio."
+                )
             }
             playbackLock.notifyAll()
         }
@@ -512,7 +589,9 @@ class AudioEngine(private val context: android.content.Context) {
             if (communicationDeviceListener != null) return
             try {
                 val listener = AudioManager.OnCommunicationDeviceChangedListener { device ->
-                    Log.d(TAG, "Communication device changed via listener: ${device?.let { getDeviceTypeName(it.type) } ?: "NONE"}")
+                    Log.d(
+                        TAG,
+                        "Communication device changed via listener: ${device?.let { getDeviceTypeName(it.type) } ?: "NONE"}")
                 }
                 communicationDeviceListener = listener
                 audioManager.addOnCommunicationDeviceChangedListener(context.mainExecutor, listener)
@@ -601,7 +680,10 @@ class AudioEngine(private val context: android.content.Context) {
                     if (targetDevice != null) {
                         audioManager.clearCommunicationDevice()
                         val success = audioManager.setCommunicationDevice(targetDevice)
-                        Log.d(TAG, "Successfully set communication device to: ${getDeviceTypeName(targetDevice.type)} (Success: $success)")
+                        Log.d(
+                            TAG,
+                            "Successfully set communication device to: ${getDeviceTypeName(targetDevice.type)} (Success: $success)"
+                        )
                     } else {
                         audioManager.clearCommunicationDevice()
                         @Suppress("DEPRECATION")
