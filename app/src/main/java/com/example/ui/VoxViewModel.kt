@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.os.Build
 import com.example.audio.VoxService
+import com.example.update.UpdateInfo
+import com.example.update.UpdateManager
 import android.net.LinkProperties
 import android.net.NetworkCapabilities
 import android.util.Log
@@ -37,6 +39,14 @@ enum class AppThemeChoice {
     SYSTEM, LIGHT, DARK
 }
 
+sealed class UpdateState {
+    object Idle : UpdateState()
+    object Checking : UpdateState()
+    data class UpdateAvailable(val info: UpdateInfo) : UpdateState()
+    data class Downloading(val progress: Int) : UpdateState()
+    data class Error(val message: String) : UpdateState()
+}
+
 class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -53,13 +63,13 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     val isConnected = MutableStateFlow(false)
     val localIpAddress = MutableStateFlow("Unknown")
     val discoveredServers = MutableStateFlow<List<DiscoveredServer>>(emptyList())
-    
+
     // On-demand scanning & broadcasting states
     val isScanning = MutableStateFlow(false)
     val scanTimeRemaining = MutableStateFlow(0)
     val isBroadcasting = MutableStateFlow(false)
     val broadcastTimeRemaining = MutableStateFlow(0)
-    
+
     // User Configuration Input
     val nickname = MutableStateFlow("User_" + (100..999).random())
     val targetServerIp = MutableStateFlow("192.168.43.1") // Standard default Android hotspot IP
@@ -120,6 +130,10 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
     private var voxServer: VoxServer? = null
     private var voxClient: VoxClient? = null
     private var clientConnectionJob: Job? = null
+
+    // OTA update
+    private val updateManager = UpdateManager(context)
+    val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
 
     private var broadcastJob: Job? = null
     private var discoveryJob: Job? = null
@@ -195,7 +209,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         stopDiscoveryScan() // safety clean
         isScanning.value = true
         scanTimeRemaining.value = 30
-        
+
         addLog("[Discovery] Scanning started for 30s...")
         startDiscoveryListener()
 
@@ -238,7 +252,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                                 val srvIp = parts[1]
                                 val srvPort = parts[2].toIntOrNull() ?: DEFAULT_PORT
                                 val srvName = parts.subList(3, parts.size).joinToString(":")
-                                
+
                                 if (srvIp != localIpAddress.value) {
                                     val now = System.currentTimeMillis()
                                     val newSrv = DiscoveredServer(srvIp, srvPort, srvName, now)
@@ -251,7 +265,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                                         addLog("[Discovery] Found $srvName online at $srvIp:$srvPort")
                                     }
                                     discoveredServers.value = current
-                                    
+
                                     viewModelScope.launch(Dispatchers.Main) {
                                         stopDiscoveryScan()
                                     }
@@ -361,7 +375,8 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.isLimiterEnabled = storedLimiterEnabled
 
         // 15. limiterThreshold
-        val storedLimiterThreshold = prefs.getFloat("limiterThreshold", audioEngine.limiterThreshold).coerceIn(0.5f, 0.99f)
+        val storedLimiterThreshold =
+            prefs.getFloat("limiterThreshold", audioEngine.limiterThreshold).coerceIn(0.5f, 0.99f)
         limiterThreshold.value = storedLimiterThreshold
         audioEngine.limiterThreshold = storedLimiterThreshold
 
@@ -432,6 +447,12 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
         detectLocalIp()
 
+        // Check for updates in the background a few seconds after launch
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(4_000)
+            checkForUpdate()
+        }
+
         // Pruning job for dead discovery beacons
         viewModelScope.launch(Dispatchers.Default) {
             while (true) {
@@ -487,7 +508,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                 val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
                 for (netInterface in interfaces) {
                     if (!netInterface.isUp || netInterface.isLoopback) continue
-                    
+
                     val addresses = Collections.list(netInterface.inetAddresses)
                     for (address in addresses) {
                         if (!address.isLoopbackAddress) {
@@ -583,7 +604,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                     val serverIp = targetServerIp.value
                     val port = serverLaunchPort.value
                     addLog("Connecting to server at $serverIp:$port...")
-                    
+
                     try {
                         val uri = URI("ws://$serverIp:$port")
 
@@ -591,7 +612,10 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                         audioEngine.stopRecording()
                         audioEngine.stopPlayback()
 
-                        try { voxClient?.close() } catch (e: Exception) {}
+                        try {
+                            voxClient?.close()
+                        } catch (e: Exception) {
+                        }
                         voxClient = null
 
                         var isClientConnectionActive = true
@@ -617,7 +641,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to start service", e)
                                 }
-                                
+
                                 // Start recording and playback
                                 audioEngine.startPlayback()
                                 audioEngine.startRecording { bytes ->
@@ -684,7 +708,7 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping VoxService", e)
             }
-            
+
             // Stop scanning and broadcasting timers
             stopDiscoveryScan()
             stopBroadcasting()
@@ -807,6 +831,39 @@ class VoxViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearLogs() {
         _statusLog.value = emptyList()
+    }
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            updateState.value = UpdateState.Checking
+            try {
+                val info = updateManager.checkForUpdate()
+                updateState.value = if (info != null) UpdateState.UpdateAvailable(info) else UpdateState.Idle
+            } catch (e: Exception) {
+                Log.w(TAG, "Update check error: ${e.message}")
+                updateState.value = UpdateState.Idle
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate(info: UpdateInfo) {
+        viewModelScope.launch {
+            try {
+                val apkFile = updateManager.downloadApk(info) { progress ->
+                    updateState.value = UpdateState.Downloading(progress)
+                }
+                // Hand off to the system installer; dismiss dialog
+                updateState.value = UpdateState.Idle
+                updateManager.installApk(apkFile)
+            } catch (e: Exception) {
+                Log.e(TAG, "Update download failed", e)
+                updateState.value = UpdateState.Error(e.message ?: "Download failed")
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        updateState.value = UpdateState.Idle
     }
 
     private fun addLog(message: String) {

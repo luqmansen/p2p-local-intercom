@@ -93,6 +93,10 @@ jobs:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Injected into BuildConfig so the app knows its own version code
+          # and which GitHub repo to poll for updates.
+          BUILD_NUMBER: ${{ github.run_number }}
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace

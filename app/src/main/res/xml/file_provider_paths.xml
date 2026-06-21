@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Serves files from the app's internal cache directory.
+        Used by UpdateManager to share the downloaded APK with the system installer.
+    -->
+    <cache-path name="apk_updates" path="/" />
+</paths>

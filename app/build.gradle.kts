@@ -14,10 +14,17 @@ android {
     applicationId = "com.aistudio.voxlnk.qwfbpx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // CI injects BUILD_NUMBER (= github.run_number) so each release APK gets a
+    // monotonically increasing versionCode. Local debug builds fall back to 1.
+    versionCode = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
+    versionName = "1.0.${System.getenv("BUILD_NUMBER") ?: "dev"}"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Expose the GitHub repo slug (owner/repo) at compile time so UpdateManager
+    // can call the Releases API. Injected by CI; empty string in local builds.
+    val githubRepo = System.getenv("GITHUB_REPO") ?: ""
+    buildConfigField("String", "GITHUB_REPO", "\"$githubRepo\"")
   }
 
   signingConfigs {

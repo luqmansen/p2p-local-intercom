@@ -112,6 +112,9 @@ fun VoxApp(viewModel: VoxViewModel) {
     }
     val permissionsState = rememberMultiplePermissionsState(permissions = permissions)
 
+    // Observe update state for dialogs
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+
     // Standard tactical deep canvas wrapper
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -133,6 +136,99 @@ fun VoxApp(viewModel: VoxViewModel) {
             VoxPermissionScreen(
                 onRequestAction = { permissionsState.launchMultiplePermissionRequest() }
             )
+        }
+
+        // --- OTA update dialogs (always on top) ---
+        when (val state = updateState) {
+            is UpdateState.UpdateAvailable -> AlertDialog(
+                onDismissRequest = { viewModel.dismissUpdate() },
+                containerColor = SlateSurface,
+                title = {
+                    Text(
+                        "Update Available",
+                        color = CombatWhite,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        "Version ${state.info.versionName} is ready.\nDownload and install now?",
+                        color = TacticalMuted,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.downloadAndInstallUpdate(state.info) }) {
+                        Text(
+                            "UPDATE", color = TacticalGreen, fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissUpdate() }) {
+                        Text("LATER", color = TacticalMuted, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+
+            is UpdateState.Downloading -> AlertDialog(
+                onDismissRequest = {},
+                containerColor = SlateSurface,
+                title = {
+                    Text(
+                        "Downloading Update",
+                        color = CombatWhite,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "${state.progress}%",
+                            color = TacticalMuted,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        LinearProgressIndicator(
+                            progress = { state.progress / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = TacticalGreen,
+                            trackColor = TacticalBorder
+                        )
+                    }
+                },
+                confirmButton = {}
+            )
+
+            is UpdateState.Error -> AlertDialog(
+                onDismissRequest = { viewModel.dismissUpdate() },
+                containerColor = SlateSurface,
+                title = {
+                    Text(
+                        "Update Failed",
+                        color = TacticalCrimson,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        state.message,
+                        color = TacticalMuted,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.dismissUpdate() }) {
+                        Text("OK", color = TacticalGreen, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+
+            else -> {}
         }
     }
 }
